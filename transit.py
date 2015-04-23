@@ -4,9 +4,17 @@ from threading import Thread
 from Queue import Queue, Empty
 import socket, sys
 
+'''This class is used to represent the structure of an AITF shim'''
+class AITF(Packet):
+	name = "AITF Shim"
+	fields_desc = [	XBitField("PK",			0,	48),
+					BitField("BytesPerHop",	0,	8),
+					BitField("Checksum",	0,	32),
+					StrField("RR", None, fmt="H")
+				]
 
 '''The Packet class is responsible for intercepting and sending on modified traffic'''
-class Packet():
+class Transit():
 	'''
 	Worker function to sniff packets
 	packet_queue - the queue to put sniffed packets into
@@ -14,7 +22,7 @@ class Packet():
 	'''
 	def capture(self, packet_queue, filter):
 		#Note: prn is a callback parameter and is used to store the sniffed packet into the queue
-		sniff(iface="eth0", filter=filter, prn = lambda x : packet_queue.put(x) )
+		sniff(iface="eth0", filter=filter, prn = lambda pkt : packet_queue.put(pkt) )
 
 
 	'''
@@ -36,18 +44,17 @@ class Packet():
 		while True:
 			try:
 				packet = packet_queue.get(timeout = queue_timeout)
+				packet = AITF()/packet
 				packet.show()
-				#sendp(packet)
 			except Empty:
 				print "Packet queue has been empty for {0} second(s)".format(queue_timeout)
 				pass
 
 	'''
-	TODO: Generates an AITF shim header
+	Will fetch the previous AITF header or return none if no such header exists
 	'''
-	def generate_AITF_header(self, source_ip, dest_ip):
-		#TODO - put the logic for making an AITF shim in here
+	def get_AITF_header(self, packet):
 		return 0
 
-Packet().capture_thread("icmp and host 192.168.1.104",1)
+Transit().capture_thread("icmp and host 192.168.1.104",1)
 

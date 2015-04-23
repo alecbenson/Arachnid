@@ -1,6 +1,7 @@
 from scapy.all import *
 from struct import *
 import socket, sys
+import aitf.py
 
 '''The Packet class is responsible for intercepting and sending on modified traffic'''
 class Packet():
