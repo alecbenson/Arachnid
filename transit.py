@@ -3,6 +3,7 @@ from struct import *
 from threading import Thread
 from Queue import Queue, Empty
 import socket, sys
+import config
 
 '''This class is used to represent the structure of an AITF shim'''
 class AITF(Packet):
@@ -74,5 +75,14 @@ class Transit():
 				print "Packet queue has been empty for {0} second(s)".format(queue_timeout)
 				pass
 
-Transit().capture_thread("icmp and host 192.168.1.104",1)
+def main():
+	global config_params
+	#Transit().capture_thread("icmp and host 192.168.1.104",1)
+	
+	#Parse config file
+	config_params = config.Configuration()
+
+
+if __name__ == "__main__":
+    main()
 
