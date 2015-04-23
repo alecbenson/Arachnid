@@ -6,7 +6,7 @@ import socket, sys
 
 '''This class is used to represent the structure of an AITF shim'''
 class AITF(Packet):
-	name = "AITF Shim"
+	name = "AITF"
 	fields_desc = [XBitField("PK",0,48),
 	BitField("BytesPerHop",	0,	8),
 	BitField("Checksum",	0,	32),
@@ -23,6 +23,13 @@ class Transit():
 	def capture(self, packet_queue, filter):
 		#Note: prn is a callback parameter and is used to store the sniffed packet into the queue
 		sniff(iface="eth0", filter=filter, prn = lambda pkt : packet_queue.put(pkt) )
+
+	'''
+	Shims the packet with an AITF header
+	'''
+	def shim_packet(self, packet):
+		shimmed_packet = packet[Ether]/packet[IP]/AITF()/packet[ICMP]
+		return shimmed_packet
 
 	'''
 	This class is where all the magic happens
@@ -43,7 +50,7 @@ class Transit():
 		while True:
 			try:
 				packet = packet_queue.get(timeout = queue_timeout)
-				packet = AITF()/packet
+				packet = self.shim_packet(packet)
 				packet.show()
 			except Empty:
 				print "Packet queue has been empty for {0} second(s)".format(queue_timeout)
