@@ -28,8 +28,15 @@ class Transit():
 	Shims the packet with an AITF header
 	'''
 	def shim_packet(self, packet):
-		shimmed_packet = packet[Ether]/packet[IP]/AITF()/packet[ICMP]
-		return shimmed_packet
+		aitf_shim = AITF()
+		layer = packet[IP]
+		aitf_shim.add_payload(layer.payload)
+		layer.remove_payload()
+
+		#This will shove our AITF shim between layers 3 and 4
+		layer.add_payload(aitf_shim)
+		return packet
+
 
 	'''
 	This class is where all the magic happens
@@ -51,7 +58,18 @@ class Transit():
 			try:
 				packet = packet_queue.get(timeout = queue_timeout)
 				packet = self.shim_packet(packet)
-				packet.show()
+
+				#This is just test code in place now for fucking around with echo replies
+				if(packet[IP].src == "192.168.1.104"):
+					temp = packet[Ether].src
+					packet[Ether].src = packet[Ether].dst
+					packet[Ether].dst = temp
+					packet[IP].src = "192.168.1.11"
+					packet[IP].dst = "192.168.1.104"
+					packet[AITF].RR = "FUCK YEAH"
+					packet.show()
+
+					sendp(packet)
 			except Empty:
 				print "Packet queue has been empty for {0} second(s)".format(queue_timeout)
 				pass
