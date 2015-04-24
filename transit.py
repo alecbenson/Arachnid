@@ -2,7 +2,7 @@ from scapy.all import *
 from struct import *
 from threading import Thread
 from Queue import Queue, Empty
-import socket, sys
+import socket, sys, time
 import config
 
 '''This class is used to represent the structure of an AITF shim'''
@@ -17,13 +17,42 @@ class AITF(Packet):
 class Transit():
 
 	'''
+	This method is responsible for detecting the rate at which traffic flows through the node and inserting inserting incoming packets into the queue
+	Each time it recieves traffic from a node, it creates an entry in a table and keeps track of the amount of traffic that has been sent
+	over the last rate_sample_duration seconds. See config file to change the way this function operates. 
+
+	packet - an incoming packet that needs to be analyzed
+	packet_queue - the queue of packets that need to be checked
+	'''
+	def check_traffic(self, packet, packet_queue):
+		packet_queue.put(packet)
+		packet_src = str(packet[IP].src)
+
+		#Store the packet length and the time of entry in each mapping
+		if packet_src not in route_list:
+			print "Added entry for packets from {0}\n".format(packet_src)
+			route_list[packet_src] =  ( len(packet), time.time() )
+		else:
+			#If rate_sample_duration seconds have passed, reset the entry
+			if time.time() - route_list[packet_src][1] >= config_params.rate_sample_duration:
+				route_list[packet_src] =  ( len(packet), time.time() )
+			else:
+				#If the source of this packet has sent too much traffic...
+				if route_list[packet_src][0] >= config_params.max_bytes:
+					print "Send a filtering request to block traffic from {0}\n".format(packet_src)
+				else:
+					#Increment the total amount of bytest that this host has sent in recent memory
+					route_list[packet_src] = ( route_list[packet_src][0] +  len(packet), route_list[packet_src][1] )
+
+	'''
 	Worker function to sniff packets
 	packet_queue - the queue to put sniffed packets into
 	filter - the string to filter sniffed packets with
 	'''
 	def capture(self, packet_queue, filter):
 		#Note: prn is a callback parameter and is used to store the sniffed packet into the queue
-		sniff(iface="eth0", filter=filter, prn = lambda pkt : packet_queue.put(pkt) )
+		sniff(iface="eth0", filter=filter, prn = lambda packet : self.check_traffic(packet, packet_queue) )
+
 
 	'''
 	Shims the packet with an AITF header
@@ -40,7 +69,7 @@ class Transit():
 
 
 	'''
-	This class is where all the magic happens
+	This class is where all the magic happens...
 	filter - a string containing filters for deciding what to capture. Example: 'icmp' will only capture icmp packets.
 	queue_timeout - how long to wait for a packet to enter the queue before complaining
 	'''
@@ -77,10 +106,11 @@ class Transit():
 
 def main():
 	global config_params
-	#Transit().capture_thread("icmp and host 192.168.1.104",1)
-	
-	#Parse config file
+	global route_list
+	route_list = {}
 	config_params = config.Configuration()
+	Transit().capture_thread("icmp and src 192.168.1.103",1)
+	
 
 
 if __name__ == "__main__":
