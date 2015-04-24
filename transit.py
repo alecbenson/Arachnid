@@ -20,20 +20,30 @@ class AITF(Packet):
 class Transit():
 
 	'''
-		Starts netfilterqueue
+	Callback function for NfQueue. 
+	If the machine is in host mode, then it will check to see if it is receiving too much traffic.
+	If the machine is in "router" mode, then it will shim packets
+	'''
+	def callback(self, packet):
+		if config_params.mode == "router":
+			self.shim_packet(packet)
+		elif config_params.mode == "host":
+			self.check_traffic(packet)
+		else:
+			print "Unrecognized mode set in the config: {0}\n".format(config_params.mode)
+			sys.exit()
+
+	'''
+	Starts netfilterqueue
 	'''
 	def net_filter(self):
 		nfqueue = NetfilterQueue()
-		nfqueue.bind(1, Transit().shim_packet)
+		nfqueue.bind(1, self.callback)
 		nfqueue.run()
 
-
 	'''
-	Callback function for shimming netfilterqueue packets
-
 	Packet - a binary packet that will be captured, ruthlessly held prisoner by netfilterqueue, 
 	and tortured by having and AITF shim shoved under its nails
-
 	'''
 	def shim_packet(self, packet):
 		#Get the payload of the packet and structure it as a scapy packet object
@@ -61,27 +71,30 @@ class Transit():
 	Each time it recieves traffic from a node, it creates an entry in a table and keeps track of the amount of traffic that has been sent
 	over the last rate_sample_duration seconds. See config file to change the way this function operates. 
 
-	packet - a scapy packet object that needs to be analyzed
+	packet - a netfilterqueue packet object that needs to be analyzed
 	packet_queue - the queue of packets that need to be checked
 	'''
 	def check_traffic(self, packet):
-		packet_src = str(packet[IP].src)
+		#We need to get the packet object from netfilterqueue in the form of a scapy packet object
+		pkt = IP(packet.get_payload())
+
+		packet_src = str(pkt[IP].src)
 
 		#Store the packet length and the time of entry in each mapping
 		if packet_src not in route_list:
 			print "Added entry for packets from {0}\n".format(packet_src)
-			route_list[packet_src] =  ( len(packet), time.time() )
+			route_list[packet_src] =  ( len(pkt), time.time() )
 		else:
 			#If rate_sample_duration seconds have passed, reset the entry
 			if time.time() - route_list[packet_src][1] >= config_params.rate_sample_duration:
-				route_list[packet_src] =  ( len(packet), time.time() )
+				route_list[packet_src] =  ( len(pkt), time.time() )
 			else:
 				#If the source of this packet has sent too much traffic...
 				if route_list[packet_src][0] >= config_params.max_bytes:
 					print "Send a filtering request to block traffic from {0}\n".format(packet_src)
 				else:
 					#Increment the total amount of bytest that this host has sent in recent memory
-					route_list[packet_src] = ( route_list[packet_src][0] +  len(packet), route_list[packet_src][1] )
+					route_list[packet_src] = ( route_list[packet_src][0] +  len(pkt), route_list[packet_src][1] )
 
 
 def main():
