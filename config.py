@@ -28,8 +28,8 @@ class Configuration():
 			#How many nodes are on the network?
 			self.node_count = config.getint( section_name, "node_count")
 
-			#What is the public key associated with this node?
-			self.node_public_key = config.get( section_name, "node_public_key")
+			#The secret key used to generate nonces
+			self.node_secret_key = config.get( section_name, "node_secret_key")
 
 			#Iterate through private keys and store them in node_keys
 			self.node_keys = []
