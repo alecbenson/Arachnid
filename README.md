@@ -1,3 +1,4 @@
 # Arachnid
 
-"Hey Patrick and Eric" -Alec Benson
+To run:
+	sudo python2 transit.py
