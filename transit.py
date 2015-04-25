@@ -4,6 +4,11 @@ from netfilterqueue import NetfilterQueue
 from Crypto.Cipher import AES
 import socket, sys, time, config, random, binascii, netifaces as ni, threading, dpkt
 
+'''This class is used to help determine the length of the RR field when decoding packets'''
+class RRLen(FieldLenField):
+    def i2repr(self, pkt, x):
+        return lhex(self.i2h(pkt, x))  
+
 '''This class is used to represent the structure of an AITF shim'''
 class AITF(Packet):
 	name = "AITF"
@@ -11,7 +16,7 @@ class AITF(Packet):
 	BitField("BytesPerHop",	0,	8),
 	BitField("PayloadProto", 0, 8),
 	BitField("Checksum",	0,	32),
-	XFieldLenField("length", None, length_of="RR", fmt="H"),
+	RRLen("length", None, length_of="RR", fmt="H"),
 	StrLenField("RR", "", length_from=lambda x:x.length)]
 
 
