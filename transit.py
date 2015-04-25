@@ -5,7 +5,7 @@ from Crypto.Cipher import AES
 import socket, sys, time, config, random, binascii, netifaces as ni, threading, dpkt
 
 '''This class is used to help determine the length of the RR field when decoding packets'''
-class RRLen(FieldLenField):
+class XFieldLenField(FieldLenField):
     def i2repr(self, pkt, x):
         return lhex(self.i2h(pkt, x))  
 
@@ -16,7 +16,7 @@ class AITF(Packet):
 	BitField("BytesPerHop",	0,	8),
 	BitField("PayloadProto", 0, 8),
 	BitField("Checksum",	0,	32),
-	RRLen("length", None, length_of="RR", fmt="H"),
+	XFieldLenField("length", None, length_of="RR", fmt="H"),
 	StrLenField("RR", "", length_from=lambda x:x.length)]
 
 
@@ -31,7 +31,7 @@ class Transit():
 	'''
 	def callback(self, packet):
 		if config_params.mode == "router":
-			self.shim_packet(packet)
+			packet.set_payload( self.shim_packet(packet) )
 		elif config_params.mode == "host":
 			self.check_traffic(packet)
 		else:
@@ -145,24 +145,19 @@ class Transit():
 	'''
 	def shim_packet(self, packet):
 		#Get the packet and structure it as a scapy packet object
-		shimmed_packet = self.nfq_to_scapy(packet)
+		orig_pkt = IP(packet.get_payload())
 
-		#Make the AITF shim
-		aitf_shim = AITF()
-		
-		#Move the IP payload onto the AITF shim, 
-		#and then glue the AITF shim + new payload back onto the IP layer
-		layer = shimmed_packet[IP]
-		aitf_shim.add_payload(layer.payload)
-		layer.remove_payload()
-		layer.add_payload(aitf_shim)
+		iplayer = orig_pkt[IP]
+		iplayer.proto = 145
+		payload = orig_pkt.payload
+		iplayer.remove_payload()
 
-		#Test to update shim fields
-		shimmed_packet = self.update_AITF_shim(shimmed_packet)
-		shimmed_packet.show()
 
-		#Modify the original packet to have the new payload
-		packet.set_payload(str(shimmed_packet))
+		aitf = AITF()
+		new_pkt = iplayer/aitf/payload
+		new_pkt.show()
+		return str(new_pkt)
+
 
 
 	'''
@@ -214,7 +209,7 @@ def main():
 	#These bindings help us decide how to interpret the payload of the packet
 	bind_layers(IP, AITF, proto=145)
 	bind_layers(AITF, TCP, PayloadProto=6)
-	bind_layers(AITF, TCP, PayloadProto=1)
+	bind_layers(AITF, ICMP, PayloadProto=1)
 	bind_layers(AITF, UDP, PayloadProto=17)
 
 	config_params = config.Configuration()
