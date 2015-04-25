@@ -9,8 +9,10 @@ class AITF(Packet):
 	name = "AITF"
 	fields_desc = [XBitField("PK",0,48),
 	BitField("BytesPerHop",	0,	8),
+	BitField("PayloadProto", 0, 8),
 	BitField("Checksum",	0,	32),
-	StrField("RR", "", fmt="H")]
+	XFieldLenField("length", None, length_of="RR", fmt="H"),
+	StrLenField("RR", "", length_from=lambda x:x.length)]
 
 
 
@@ -47,6 +49,7 @@ class Transit():
 	'''
 	def hex_to_ip(self, hex_ip):
 		return socket.inet_ntoa( binascii.unhexlify(hex_ip) )
+
 
 	'''
 	Generates a hash of the given IPV4 address using the node's secret key
@@ -155,7 +158,6 @@ class Transit():
 
 		#Modify the original packet to have the new payload
 		packet.set_payload(str(shimmed_packet))
-		#print str(shimmed_packet)
 
 
 	'''
@@ -203,11 +205,16 @@ def main():
 	global config_params
 	global route_list
 	route_list = {}
-	config_params = config.Configuration()
+	#AITF packets use IP proto #145 and can be identified this way
+	#These bindings help us decide how to interpret the payload of the packet
+	bind_layers(IP, AITF, proto=145)
+	bind_layers(AITF, TCP, PayloadProto=6)
+	bind_layers(AITF, TCP, PayloadProto=1)
+	bind_layers(AITF, UDP, PayloadProto=17)
 
+	config_params = config.Configuration()
 	Transit().net_filter()
 	
-
 
 if __name__ == "__main__":
     main()
