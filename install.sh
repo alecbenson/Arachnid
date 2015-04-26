@@ -2,6 +2,7 @@ echo "Installing dependencies..."
 sudo apt-get install python-pip build-essential python-dev libnetfilter-queue-dev
 sudo pip install scapy
 sudo pip install pycrypto
+sudo pip install netifaces
 
 cd ~/Desktop
 echo "Cloning netfilterqueue repo..."

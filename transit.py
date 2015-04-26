@@ -155,6 +155,7 @@ class Transit():
 
 		aitf = AITF()
 		new_pkt = iplayer/aitf/payload
+		new_pkt = self.update_AITF_shim(new_pkt)
 		new_pkt.show()
 		return str(new_pkt)
 
