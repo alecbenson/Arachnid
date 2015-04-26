@@ -1,5 +1,5 @@
 echo "Installing dependencies..."
-sudo apt-get install python-pip build-essential python-dev libnetfilter-queue-dev
+sudo apt-get install python-pip build-essential python-dev libnetfilter-queue-dev python-setuptools
 sudo pip install scapy
 sudo pip install pycrypto
 sudo pip install netifaces
