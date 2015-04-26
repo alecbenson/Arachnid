@@ -10,6 +10,9 @@ cd ../pycrypto-2.6.1
 sudo python setup.py install
 cd ../python-netfilterqueue
 sudo python setup.py install
+cd ../scapy-2.3.1
+sudo python setup.py install
+
 
 cd ../../setup\ scripts
 sudo sh nfqueue-iptable.sh

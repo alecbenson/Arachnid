@@ -156,7 +156,13 @@ class Transit():
 		aitf = AITF()
 		new_pkt = iplayer/aitf/payload
 		new_pkt = self.update_AITF_shim(new_pkt)
-		new_pkt.show()
+
+		#We need to recalculate the IP checksum or else the shimmed packet will get dropped at the next hop
+		del new_pkt.chksum
+		#Show2 will rebuild the checksum
+		new_pkt.show2()
+
+
 		return str(new_pkt)
 
 
