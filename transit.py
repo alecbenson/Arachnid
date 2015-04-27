@@ -169,16 +169,20 @@ class Transit():
 
 			#three way hannnndshakkeeeee!! (whaaat)
 			ip = IP(src=src, dst=config_params.gateway_ip )
-			tcp_syn = TCP(sport=sport, dport=443, flags='S', seq=seq)
+			tcp_syn = TCP(sport=sport, dport=80, flags='S', seq=seq)
 			tcp_synack = sr1(ip/tcp_syn)
 
-			#Respond with final ack
-			tcp_ack = TCP(sport=sport, dport=443, flags='A', seq=tcp_synack.ack + 1, ack=tcp_synack.seq + 1)
+			#Respond with final ack!
+			#Note that there is a slight complication here. 
+			#Because of the way scapy works, the host is actually totally unaware that we are trying to open up a TCP connection.
+			#When it gets the synack back, our own host freaks out and tries to reset the connection.
+			#We can solve this by blocking outbound reset packets with an Ip table rule, but for now we'll just blissfully pretend that everything is okay. 
+			tcp_ack = TCP(sport=sport, dport=80, flags='A', seq=tcp_synack.ack, ack=tcp_synack.seq + 1)
 			send(ip/tcp_ack)
 
 			#Send the payload over
 			payload = "RRBLOCK:" + rr_path
-			tcp_send = TCP(sport=sport, dport=443, flags="PA", seq = tcp_synack.ack + 2, ack=tcp_synack.seq + 1)
+			tcp_send = TCP(sport=sport, dport=80, flags="PA", seq=tcp_synack.ack, ack=tcp_synack.seq + 1)
 			send(ip/tcp_send/payload)
 		else:
 			print "No RR path attached to this packet, can't send filter request out :( "
