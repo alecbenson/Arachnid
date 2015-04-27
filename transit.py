@@ -2,7 +2,9 @@ from scapy.all import *
 from struct import *
 from netfilterqueue import NetfilterQueue
 from Crypto.Cipher import AES
-import socket, sys, time, config, random, binascii, netifaces as ni, threading, dpkt
+from subprocess import call
+import socket, sys, time, config, random
+import binascii, netifaces as ni, threading, dpkt, atexit
 
 '''Exception for if we get packets that don't have an AITF layer'''
 class No_AITF_Shim(Exception):
@@ -26,6 +28,18 @@ class AITF(Packet):
 
 '''The Packet class is responsible for intercepting and sending on modified traffic'''
 class Transit():
+
+	'''
+	Binds IP layers for scapy.
+	These bindings help us decide how to interpret the payload of the packet
+	'''
+	def bind_packet_layers(self):
+		#AITF packets use IP proto #145 and can be identified this way
+		bind_layers(IP, AITF, proto=145)
+		bind_layers(AITF, TCP, PayloadProto=6)
+		bind_layers(AITF, ICMP, PayloadProto=1)
+		bind_layers(AITF, UDP, PayloadProto=17)
+
 
 	'''
 	Callback function for NfQueue. 
@@ -259,6 +273,32 @@ class Transit():
 		return IP(payload)
 
 
+	'''Issues IP table rules depending on the mode that the program is running in'''
+	def iptables_intercept(self):
+		if config_params.mode == "router":
+			call(["sudo","iptables", "-I", "FORWARD", "-d", config_params.local_subnet,
+			 "-j", "NFQUEUE", "--queue-num", "1"] )
+
+			call(["sudo","iptables", "-I", "INPUT", "-p", "tcp", "--dport", "80",
+			 "-d", config_params.local_subnet, "-j", "NFQUEUE", "--queue-num", "1"] )
+
+		elif config_params.mode == "host":
+			call(["sudo","iptables", "-I", "INPUT", "-p", "tcp", "--dport", "80",
+			 "-d", config_params.local_subnet, "-j", "NFQUEUE", "--queue-num", "1"] )
+
+			call(["sudo","iptables", "-I", "INPUT", "!", "-p", "tcp",
+			 "-d", config_params.local_subnet, "-j", "NFQUEUE", "--queue-num", "1"] )
+
+
+	'''
+	Flushes iptables rules upon exiting the program
+	This function is registered to run at exit
+	'''
+	def flush_iptables(self):
+		call(["sudo", "iptables", "-F"])
+		call(["sudo", "iptables", "-F"])
+
+
 	'''
 	Starts netfilterqueue
 	'''
@@ -276,15 +316,15 @@ def main():
 	global config_params
 	global route_list
 	route_list = {}
-	#AITF packets use IP proto #145 and can be identified this way
-	#These bindings help us decide how to interpret the payload of the packet
-	bind_layers(IP, AITF, proto=145)
-	bind_layers(AITF, TCP, PayloadProto=6)
-	bind_layers(AITF, ICMP, PayloadProto=1)
-	bind_layers(AITF, UDP, PayloadProto=17)
-
 	config_params = config.Configuration()
-	Transit().net_filter()
+	transit = Transit()
+
+	#Set/Flush IP tables
+	atexit.register(transit.flush_iptables)
+	transit.iptables_intercept()
+
+	transit.bind_packet_layers()
+	transit.net_filter()
 	
 
 if __name__ == "__main__":

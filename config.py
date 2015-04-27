@@ -6,6 +6,7 @@ class Configuration():
 			aitf_section = "AITF"
 			router_section = "Router Config"
 			host_section = "Host Policy Module"
+			network_section = "Network Config"
 
 			config = ConfigParser.RawConfigParser()
 			config.read("config.cfg")
@@ -34,6 +35,10 @@ class Configuration():
 			self.rate_sample_duration = config.getint( host_section, "rate_sample_duration")
 
 			self.gateway_ip = config.get( host_section, "gateway_ip")
+
+
+			'''################# NETWORK SECTION#################'''
+			self.local_subnet = config.get( network_section, "local_subnet" )
 
 		except ConfigParser.NoOptionError:
 			print "Error parsing configuration. Invalid option provided"
