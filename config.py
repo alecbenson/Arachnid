@@ -3,39 +3,35 @@ import ConfigParser, sys
 class Configuration():
 	def __init__(self):
 		try:
-			section_name = "AITF"
+			aitf_section = "AITF"
+			router_section = "Router Config"
+			host_section = "Host Policy Module"
+
 			config = ConfigParser.RawConfigParser()
 			config.read("config.cfg")
 
+			'''################## AITF SECTION ##################'''
 			#Is this machine a host or a router?
-			self.mode = config.get( section_name, "mode")
+			self.mode = config.get( aitf_section, "mode")
 
+
+			'''################## ROUTER SECTION #################'''
 			#How long should a block last?
-			self.filter_duration = config.getint( section_name, "filter_duration")
+			self.filter_duration = config.getint( router_section, "filter_duration")
 
 			#How long should a temporary filter last?
-			self.temp_filter_duration = config.getint( section_name, "temp_filter_duration" )
-
-			#What is the max amount of traffic we can allow in rate_sample_duration seconds?
-			self.max_bytes = config.getint( section_name, "max_bytes")
-
-			#We check for 'max_bytes' bytes of traffic per 'rate_sample_duration' seconds to decide if we should issue a filtering request
-			self.rate_sample_duration = config.getint( section_name, "rate_sample_duration")
-
-			#What is the ID of this node in the network?
-			self.node_id = config.getint( section_name, "node_id")
-
-			#How many nodes are on the network?
-			self.node_count = config.getint( section_name, "node_count")
+			self.temp_filter_duration = config.getint( router_section, "temp_filter_duration" )
 
 			#The secret key used to generate nonces
-			self.node_secret_key = config.get( section_name, "node_secret_key")
+			self.node_secret_key = config.get( router_section, "node_secret_key")
 
-			#Iterate through private keys and store them in node_keys
-			self.node_keys = []
-			for index in range(self.node_count):
-				node_key = config.get( section_name, "node{0}_key".format(index) )
-				self.node_keys.insert(index, node_key)
+
+			'''################## HOST SECTION ###################'''
+			#What is the max amount of traffic we can allow in rate_sample_duration seconds?
+			self.max_bytes = config.getint( host_section, "max_bytes")
+
+			#We check for 'max_bytes' bytes of traffic per 'rate_sample_duration' seconds to decide if we should issue a filtering request
+			self.rate_sample_duration = config.getint( host_section, "rate_sample_duration")
 
 		except ConfigParser.NoOptionError:
 			print "Error parsing configuration. Invalid option provided"

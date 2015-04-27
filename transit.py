@@ -20,7 +20,6 @@ class AITF(Packet):
 	StrLenField("RR", "", length_from=lambda x:x.length)]
 
 
-
 '''The Packet class is responsible for intercepting and sending on modified traffic'''
 class Transit():
 
@@ -99,16 +98,76 @@ class Transit():
 		return self.hash_ip(dest_ip) == nonce_value
 
 
-	'''Sends a filtering request to a node'''
-	def send_filter_request(self, RR_path):
-		#Get the real IP address
-		dst_ip = str( self.hex_to_ip(RR_path[:8]) )
-		print "Sending a filtering request to block traffic from {0}...\n".format(dst_ip)
+	'''
+	This method is responsible for detecting the rate at which traffic flows through the node.
+	Each time it a host receives a packet, it creates an entry in a table and keeps track of the amount of traffic that has been sent
+	over the last rate_sample_duration seconds. See config file to change the way this function operates. 
 
-		#Form the requst packet and shove the RR path in the payload
-		packet = IP(dst=dst_ip)/TCP(dport=80, flags="S")/str(RR_path)
-		response = sr1(packet)
-		return
+	packet - a netfilterqueue packet object that needs to be analyzed
+	packet_queue - the queue of packets that need to be checked
+	'''
+	def check_traffic(self, packet):
+		#We need to get the packet object from netfilterqueue in the form of a scapy packet object
+		#I am using dpkt to parse the packet source address here because scapy takes 2.5x longer. 
+		packet_src = socket.inet_ntoa( dpkt.ip.IP(packet.get_payload()).src )
+		packet_len = packet.get_payload_len()
+		current_time = time.time()
+
+		#Store the packet length and the time of entry in each mapping
+		if packet_src not in route_list:
+			print "Added entry for packets from {0}. First packet was {1} bytes in size\n".format(packet_src, packet_len)
+			route_list[packet_src] =  ( packet_len, current_time )
+		else:
+			#If rate_sample_duration seconds have passed, reset the entry
+			if current_time - route_list[packet_src][1] >= config_params.rate_sample_duration:
+				route_list[packet_src] =  ( packet_len, current_time )
+				return
+			else:
+				#If the source of this packet has sent too much traffic...
+				if route_list[packet_src][0] >= config_params.max_bytes:
+					#If we don't put this in a thread, the program will hang because 
+					#nfqueue will wait for us to accept the packet that send_filter_request sends, and send_filter_request will wait for a response 
+					#(which never come because nfqueue hasn't had a chance to accept)
+					try:
+						send_thread = threading.Thread(target=self.send_filter_request, args=(packet) )
+						send_thread.start()
+						route_list[packet_src] = (0, current_time )
+					except:
+						pass
+				else:
+					#Increment the total amount of bytest that this host has sent in recent memory
+					route_list[packet_src] = ( route_list[packet_src][0] +  packet_len, route_list[packet_src][1] )
+
+
+	'''
+	Sends a filtering request to the gateway of the victimized host. Described in the paper, the process is:
+		1. The victim V sends a filtering request to V gw , specifying an undesired flow F .
+		2. The victim?s gateway V gw :
+			(a). Installs a temporary filter to block F for T tmp seconds.
+			(b). Initiates a 3-way handshake with A gw
+			(c). Removes its temporary filter upon completion of the handshake
+
+		3. The attack gateway A gw:
+			(1). Responds to the 3-way handshake
+			(2). Installs a temporary filter to block F for Ttmp seconds, upon completion of the handshake
+			(3). Sends a filtering request to the attack source A, to stop F for Tlong >> Ttmp minutes
+	'''
+
+	def send_filter_request(self, packet):
+		#Get the real IP address
+		pkt = IP(packet.get_payload())
+
+		#We can't send a filter request without an AITF shim
+		if pkt.haslayer(AITF):
+			RR_path = pkt[AITF].RR
+			dst_ip = str( self.hex_to_ip(RR_path[: 8 ]) )
+			print "Sending a filtering request to block traffic from {0}...\n".format(dst_ip)
+
+			#Form the requst packet and shove the RR path in the payload
+			packet = IP(dst=dst_ip)/TCP(dport=80, flags="S")/str(RR_path)
+			response = sr1(packet)
+			return
+
 
 
 	'''
@@ -168,48 +227,6 @@ class Transit():
 			nfqueue.run()
 		except KeyboardInterrupt:
 			nfqueue.unbind()
-
-
-
-	'''
-	This method is responsible for detecting the rate at which traffic flows through the node.
-	Each time it a host receives a packet, it creates an entry in a table and keeps track of the amount of traffic that has been sent
-	over the last rate_sample_duration seconds. See config file to change the way this function operates. 
-
-	packet - a netfilterqueue packet object that needs to be analyzed
-	packet_queue - the queue of packets that need to be checked
-	'''
-	def check_traffic(self, packet):
-		#We need to get the packet object from netfilterqueue in the form of a scapy packet object
-		#I am using dpkt to parse the packet source address here because scapy takes 2.5x longer. 
-		packet_src = socket.inet_ntoa( dpkt.ip.IP(packet.get_payload()).src )
-		packet_len = packet.get_payload_len()
-		current_time = time.time()
-
-		#Store the packet length and the time of entry in each mapping
-		if packet_src not in route_list:
-			print "Added entry for packets from {0}. First packet was {1} bytes in size\n".format(packet_src, packet_len)
-			route_list[packet_src] =  ( packet_len, current_time )
-		else:
-			#If rate_sample_duration seconds have passed, reset the entry
-			if current_time - route_list[packet_src][1] >= config_params.rate_sample_duration:
-				route_list[packet_src] =  ( packet_len, current_time )
-				return
-			else:
-				#If the source of this packet has sent too much traffic...
-				if route_list[packet_src][0] >= config_params.max_bytes:
-					#If we don't put this in a thread, the program will hang because 
-					#nfqueue will wait for us to accept the packet that send_filter_request sends, and send_filter_request will wait for a response 
-					#(which never come because nfqueue hasn't had a chance to accept)
-					try:
-						send_thread = threading.Thread(target=self.send_filter_request, args=["c0a80174609e044f"] )
-						send_thread.start()
-						route_list[packet_src] = (0, current_time )
-					except:
-						pass
-				else:
-					#Increment the total amount of bytest that this host has sent in recent memory
-					route_list[packet_src] = ( route_list[packet_src][0] +  packet_len, route_list[packet_src][1] )
 
 
 def main():
