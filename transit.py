@@ -4,6 +4,10 @@ from netfilterqueue import NetfilterQueue
 from Crypto.Cipher import AES
 import socket, sys, time, config, random, binascii, netifaces as ni, threading, dpkt
 
+'''Exception for if we get packets that don't have an AITF layer'''
+class No_AITF_Shim(Exception):
+	pass
+
 '''This class is used to help determine the length of the RR field when decoding packets'''
 class XFieldLenField(FieldLenField):
     def i2repr(self, pkt, x):
@@ -226,6 +230,25 @@ class Transit():
 		new_pkt = self.update_AITF_shim(new_pkt)
 
 		return new_pkt
+
+
+
+	'''
+	orig_pkt - a scapy packet that needs an AITF shim
+	returns the updated scapy packet
+	'''
+	def remove_AITF_shim(self, orig_pkt):
+		if orig_pkt.haslayer(AITF):
+			iplayer = orig_pkt[IP]
+			payload = orig_pkt[AITF].payload
+			iplayer.remove_payload()
+
+			new_pkt = iplayer/payload
+			return new_pkt
+		else:
+			raise No_AITF_Shim("Tried to remove non-existent AITF layer")
+			return
+
 
 
 	'''
