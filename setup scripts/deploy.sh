@@ -1,9 +1,6 @@
 
 
-cd ~/Desktop
-echo "Cloning repo if it doesn't exist."
-git clone https://github.com/zoccihedron/Arachnid.git
-cd Arachnid
+cd ~/Desktop/Arachnid
 git pull
 
 

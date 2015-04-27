@@ -15,5 +15,4 @@ sudo python setup.py install
 
 
 cd ../../setup\ scripts
-sudo sh nfqueue-iptable.sh
 sudo python routing.py

@@ -276,18 +276,24 @@ class Transit():
 	'''Issues IP table rules depending on the mode that the program is running in'''
 	def iptables_intercept(self):
 		if config_params.mode == "router":
-			call(["sudo","iptables", "-I", "FORWARD", "-d", config_params.local_subnet,
-			 "-j", "NFQUEUE", "--queue-num", "1"] )
+			iptb_forward = "sudo iptables -I FORWARD -d {0} -j NFQUEUE --queue-num 1".format(config_params.local_subnet)
+			iptb_input = "sudo iptables -I INPUT -p tcp --dport 80 -d {0} -j NFQUEUE --queue-num 1".format(config_params.local_subnet)
+			ipv4_forwarding = "sudo sysctl -w net.ipv4.ip_forward=1"
+			icmp_send = "echo 0 | sudo tee /proc/sys/net/ipv4/conf/*/send_redirects"
+			icmp_accept = "echo 0 | sudo tee /proc/sys/net/ipv4/conf/*/send_redirects"
 
-			call(["sudo","iptables", "-I", "INPUT", "-p", "tcp", "--dport", "80",
-			 "-d", config_params.local_subnet, "-j", "NFQUEUE", "--queue-num", "1"] )
+			call( iptb_forward.split() )
+			call( iptb_input.split() )
+			call( ipv4_forwarding.split() )
+			call( icmp_send.split() )
+			call( icmp_accept.split() )
 
 		elif config_params.mode == "host":
-			call(["sudo","iptables", "-I", "INPUT", "-p", "tcp", "--dport", "80",
-			 "-d", config_params.local_subnet, "-j", "NFQUEUE", "--queue-num", "1"] )
+			iptb_tcp_input = "sudo iptables -I INPUT -p tcp --dport 80 -d {0} -j NFQUEUE --queue-num 1".format(config_params.local_subnet)
+			iptb_input = "sudo iptables -I INPUT ! -p tcp -d {0} -j NFQUEUE --queue-num 1".format(config_params.local_subnet)
 
-			call(["sudo","iptables", "-I", "INPUT", "!", "-p", "tcp",
-			 "-d", config_params.local_subnet, "-j", "NFQUEUE", "--queue-num", "1"] )
+			call( iptb_input.split() )
+			call( iptb_tcp_input.split() )
 
 
 	'''
@@ -295,8 +301,11 @@ class Transit():
 	This function is registered to run at exit
 	'''
 	def flush_iptables(self):
-		call(["sudo", "iptables", "-F"])
-		call(["sudo", "iptables", "-F"])
+		flush = "sudo iptables -F"
+		delete = "sudo iptables -X"
+
+		call( flush.split() )
+		call( delete.split() )
 
 
 	'''
