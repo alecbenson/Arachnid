@@ -129,7 +129,7 @@ class Transit():
 					#nfqueue will wait for us to accept the packet that send_filter_request sends, and send_filter_request will wait for a response 
 					#(which never come because nfqueue hasn't had a chance to accept)
 					try:
-						send_thread = threading.Thread(target=self.send_filter_request, args=(packet) )
+						send_thread = threading.Thread(target=self.send_filter_request, args=(packet,) )
 						send_thread.start()
 						route_list[packet_src] = (0, current_time )
 					except:
@@ -159,14 +159,30 @@ class Transit():
 
 		#We can't send a filter request without an AITF shim
 		if pkt.haslayer(AITF):
-			RR_path = pkt[AITF].RR
-			dst_ip = str( self.hex_to_ip(RR_path[: 8 ]) )
-			print "Sending a filtering request to block traffic from {0}...\n".format(dst_ip)
-
+			rr_path = pkt[AITF].RR
+			print "Sending a filtering request to block traffic from route {0}...\n".format( rr_path )
+			
 			#Form the requst packet and shove the RR path in the payload
-			packet = IP(dst=dst_ip)/TCP(dport=80, flags="S")/str(RR_path)
-			response = sr1(packet)
-			return
+			src = ni.ifaddresses('eth0')[2][0]['addr']
+			sport = random.randint(1024,65535)
+			seq= random.randint(1,100000)
+
+			#three way hannnndshakkeeeee!! (whaaat)
+			ip = IP(src=src, dst=config_params.gateway_ip )
+			tcp_syn = TCP(sport=sport, dport=443, flags='S', seq=seq)
+			tcp_synack = sr1(ip/tcp_syn)
+
+			#Respond with final ack
+			tcp_ack = TCP(sport=sport, dport=443, flags='A', seq=tcp_synack.ack + 1, ack=tcp_synack.seq + 1)
+			send(ip/tcp_ack)
+
+			#Send the payload over
+			payload = "RRBLOCK:" + rr_path
+			tcp_send = TCP(sport=sport, dport=443, flags="PA", seq = tcp_synack.ack + 2, ack=tcp_synack.seq + 1)
+			send(ip/tcp_send/payload)
+		else:
+			print "No RR path attached to this packet, can't send filter request out :( "
+		return
 
 
 

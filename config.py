@@ -33,6 +33,8 @@ class Configuration():
 			#We check for 'max_bytes' bytes of traffic per 'rate_sample_duration' seconds to decide if we should issue a filtering request
 			self.rate_sample_duration = config.getint( host_section, "rate_sample_duration")
 
+			self.gateway_ip = config.get( host_section, "gateway_ip")
+
 		except ConfigParser.NoOptionError:
 			print "Error parsing configuration. Invalid option provided"
 			sys.exit()
