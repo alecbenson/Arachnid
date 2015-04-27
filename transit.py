@@ -274,7 +274,7 @@ class Transit():
 
 
 	'''Issues IP table rules depending on the mode that the program is running in'''
-	def iptables_intercept(self):
+	def setup_commands(self):
 		if config_params.mode == "router":
 			iptb_forward = "sudo iptables -I FORWARD -d {0} -j NFQUEUE --queue-num 1".format(config_params.local_subnet)
 			iptb_input = "sudo iptables -I INPUT -p tcp --dport 80 -d {0} -j NFQUEUE --queue-num 1".format(config_params.local_subnet)
@@ -329,8 +329,8 @@ def main():
 	transit = Transit()
 
 	#Set/Flush IP tables
+	transit.setup_commands()
 	atexit.register(transit.flush_iptables)
-	transit.iptables_intercept()
 
 	transit.bind_packet_layers()
 	transit.net_filter()
