@@ -31,7 +31,19 @@ class Transit():
 	'''
 	def callback(self, packet):
 		if config_params.mode == "router":
-			packet.set_payload( self.shim_packet(packet) )
+			pkt = IP(packet.get_payload())
+			#Packet is already shimmed
+			if pkt.haslayer(AITF):
+				pkt = self.update_AITF_shim(pkt)
+			#Packet has not been shimmed yet
+			else:
+				pkt = self.add_AITF_shim(pkt)
+				
+			#Show2 will conveniently recalculate the IP checksum for us
+			del pkt.chksum
+			pkt.show2()
+			#Pack the packet with the new data
+			packet.set_payload( str(pkt) )
 		elif config_params.mode == "host":
 			self.check_traffic(packet)
 		else:
@@ -111,10 +123,30 @@ class Transit():
 			#Get eth0's ip address to store in the RR
 			local_ip = ni.ifaddresses('eth0')[2][0]['addr']
 			packet[AITF].RR += ( self.ip_to_hex(local_ip) + nonce)
+			packet[AITF].length += 16
 		except:
 			print "Error updating packet shim!\n"
 
 		return packet
+
+
+	'''
+	orig_pkt - a scapy packet that needs an AITF shim
+	returns the updated scapy packet
+	'''
+	def add_AITF_shim(self, orig_pkt):
+		#Get the packet and structure it as a scapy packet object
+
+		iplayer = orig_pkt[IP]
+		iplayer.proto = 145
+		payload = orig_pkt.payload
+		iplayer.remove_payload()
+
+		aitf = AITF()
+		new_pkt = iplayer/aitf/payload
+		new_pkt = self.update_AITF_shim(new_pkt)
+
+		return new_pkt
 
 
 	'''
@@ -136,34 +168,6 @@ class Transit():
 			nfqueue.run()
 		except KeyboardInterrupt:
 			nfqueue.unbind()
-
-
-	'''
-	Packet - a binary packet that will be captured, ruthlessly held prisoner by netfilterqueue, 
-	and tortured by having and AITF shim sho
-	ved under its nails
-	'''
-	def shim_packet(self, packet):
-		#Get the packet and structure it as a scapy packet object
-		orig_pkt = IP(packet.get_payload())
-
-		iplayer = orig_pkt[IP]
-		iplayer.proto = 145
-		payload = orig_pkt.payload
-		iplayer.remove_payload()
-
-
-		aitf = AITF()
-		new_pkt = iplayer/aitf/payload
-		new_pkt = self.update_AITF_shim(new_pkt)
-
-		#We need to recalculate the IP checksum or else the shimmed packet will get dropped at the next hop
-		del new_pkt.chksum
-		#Show2 will rebuild the checksum
-		new_pkt.show2()
-
-
-		return str(new_pkt)
 
 
 
