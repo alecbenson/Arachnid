@@ -44,31 +44,26 @@ class Transit():
 	'''Takes in a block request and processes it'''
 	def manage_block_request(self, packet, load, escalation_level):
 		#1. Set a local filter and once it expires keep an entry in the shadow table
-		try:
-			#An entry is 8 characters long, so we use escalation index as 
-			#an index multiplier to find the correct IP address and nonce to block
-			escalation_index = 8*escalation_level
+		#An entry is 8 characters long, so we use escalation index as 
+		#an index multiplier to find the correct IP address and nonce to block
+		escalation_index = 8*escalation_level
 
-			#IP address of the attacker
-			block_dest = load[ escalation_index : 8 + escalation_index ]
+		#Agw is the attacker gateway. We can find it in this part of the RR
+		agw_IP = self.hex_to_ip( load[ 8 + escalation_index : 16 + escalation_index ] )
 
-			#If we are the intended receiver of the blocking request
-			agw_IP = load[ 8 + escalation_index : 16 + escalation_index ]
-			if packet.dst == self.hex_to_ip(agw_IP):
-				nonce = load[16 + escalation_index : 24 + escalation_index]
-				if self.is_valid_nonce(agw_IP, nonce):
-					shadow_table[block_dest] = time.time()
-					print "Installed a block request because the attacker, {0} is one hop from me, {1}".format(self.hex_to_ip(block_dest), self.hex_to_ip(agw_IP))
-					sys.exit()
-				else:
-					print "Got nonce value {0}, it's wrong\n".format(nonce)
-					sys.exit()
+		#If we are the attacker's gateway (or the next gateway in the event of escalation)
+		if packet.dst == agw_IP:
+			nonce = load[16 + escalation_index : 24 + escalation_index]
+			if self.is_valid_nonce(agw_IP, nonce):
+				#IP address of the attacker. We can find it in this part of the RR
+				block_dest = self.hex_to_ip( load[ escalation_index : 8 + escalation_index ] )
+				shadow_table[block_dest] = time.time()
+				print "Installed filter: attacker {0} is one hop from me, {1}".format(block_dest,agw_IP)
 			else:
-				print "I need to forward this block request to the attacker gateway, {0}\n".format( self.hex_to_ip(agw_IP ))
-				sys.exit()
-				return 
-		except ValueError:
-			pass
+				print "Did NOT install filter: attacker has spoofed this path".format(nonce)
+		else:
+			print "Forwarding the requst to the proper attacker gateway, {0}\n".format( self.hex_to_ip(agw_IP ))
+			self.three_way_handshake( packet_dest, agw_IP, load)
 
 
 	'''
@@ -107,10 +102,19 @@ class Transit():
 		if config_params.mode == "router":
 			pkt = IP(packet.get_payload())
 
+			#Check to make sure the source isn't blocked
+			if pkt.src in shadow_table:
+				time_left = (shadow_table[pkt.src] + config_params.filter_duration) - time.time()
+				if time_left > 0:
+					print "Dropping packet from {0}. Still {1} seconds left in filter".format(pkt.src, time_left)
+					packet.drop()
+					return
+
 			#If the packet is destined to the router, we are likely receiving a block reqeuest
 			if pkt.dst == ni.ifaddresses('eth0')[2][0]['addr']:
 				if pkt.haslayer(TCP) & pkt.haslayer(Raw):
-					load = pkt[Raw].load
+					pkt.show()
+					load = str(pkt[Raw].load)
 					if "RRBLOCK:" in load:
 						self.manage_block_request(pkt, load, 1)
 			else:
@@ -179,7 +183,11 @@ class Transit():
 	Checks to see if the hashed nonce matches the expected nonce
 	'''
 	def is_valid_nonce(self, dest_ip, nonce_value):
-		return self.hash_ip(dest_ip) == nonce_value
+		try:
+			return self.hash_ip(dest_ip) == nonce_value
+		except ValueError:
+			ip = self.hex_to_ip(dest_ip)
+			return self.hash_ip(ip) == nonce_value
 
 
 	'''
