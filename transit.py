@@ -260,7 +260,14 @@ class Transit():
 			print "No RR path attached to this packet, can't send filter request out :( "
 		return
 
-
+	'''
+	Checks if the next hop is RR enabled
+	'''
+	def check_if_rr_enable(self, pkt):
+		src = config_params.local_ip
+		dst = pkt.dst
+		probe = IP(src=src, dst=dst)/ICMP(type="rrenable", ttl=1)
+		send(probe)
 
 	'''
 	Takes in a shimmed scapy packet object and updates the AITF fields accordingly
