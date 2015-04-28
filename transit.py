@@ -385,6 +385,7 @@ def main():
 	global shadow_table
 	route_list = {}
 	shadow_table = {}
+	aitf_routers = {}
 
 	config_params = config.Configuration()
 	transit = Transit()
