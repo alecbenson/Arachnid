@@ -4,7 +4,7 @@ from netfilterqueue import NetfilterQueue
 from Crypto.Cipher import AES
 from subprocess import call
 import socket, sys, time, config, random
-import binascii, netifaces as ni, threading, dpkt, atexit
+import binascii, threading, dpkt, atexit
 
 '''Exception for if we get packets that don't have an AITF layer'''
 class No_AITF_Shim(Exception):
@@ -111,7 +111,7 @@ class Transit():
 					return
 
 			#If the packet is destined to the router, we are likely receiving a block reqeuest
-			if pkt.dst == ni.ifaddresses('eth0')[2][0]['addr']:
+			if pkt.dst == config_params.local_ip:
 				if pkt.haslayer(TCP) & pkt.haslayer(Raw):
 					pkt.show()
 					load = str(pkt[Raw].load)
@@ -252,11 +252,10 @@ class Transit():
 		#We can't send a filter request without an AITF shim
 		if pkt.haslayer(AITF):
 			rr_path = pkt[AITF].RR
-			src = ni.ifaddresses('eth0')[2][0]['addr']
 			print "Sending a filtering request to block traffic from route {0}...\n".format( rr_path )
 
 			#Establish a three way handshake to send a filtering request
-			self.three_way_handshake(src, config_params.gateway_ip, "RRBLOCK:" + rr_path)
+			self.three_way_handshake(config_params.local_ip, config_params.gateway_ip, "RRBLOCK:" + rr_path)
 		else:
 			print "No RR path attached to this packet, can't send filter request out :( "
 		return
@@ -272,7 +271,6 @@ class Transit():
 		nonce = self.hash_ip(packet_dest)
 
 		#Get eth0's ip address to store in the RR
-		local_ip = ni.ifaddresses('eth0')[2][0]['addr']
 		path = packet[AITF].RR
 
 		#Path is empty
@@ -280,7 +278,7 @@ class Transit():
 			path += self.ip_to_hex( packet.src )
 			packet[AITF].length += 8
 
-		path += ( self.ip_to_hex(local_ip) + nonce)
+		path += ( self.ip_to_hex( config_params.local_ip ) + nonce)
 		packet[AITF].RR = path
 		packet[AITF].length += 16
 

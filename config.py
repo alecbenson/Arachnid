@@ -1,4 +1,4 @@
-import ConfigParser, sys
+import ConfigParser, sys, netifaces as ni
 
 class Configuration():
 	def __init__(self):
@@ -39,6 +39,10 @@ class Configuration():
 
 			'''################# NETWORK SECTION#################'''
 			self.local_subnet = config.get( network_section, "local_subnet" )
+
+			self.local_ip = config.get( network_section, "local_ip" )
+			if( self.local_ip == "autodetect"):
+				self.local_ip = ni.ifaddresses('eth0')[2][0]['addr']
 
 		except ConfigParser.NoOptionError:
 			print "Error parsing configuration. Invalid option provided"
