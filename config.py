@@ -26,6 +26,9 @@ class Configuration():
 			#The secret key used to generate nonces
 			self.node_secret_key = config.get( router_section, "node_secret_key")
 
+			#If false, will not comply with filter requests
+			self.compliant = config.get( router_section, "compliant")
+
 
 			'''################## HOST SECTION ###################'''
 			#What is the max amount of traffic we can allow in rate_sample_duration seconds?
