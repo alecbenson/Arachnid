@@ -62,8 +62,8 @@ class Transit():
 			else:
 				print "Did NOT install filter: attacker has spoofed this path".format(nonce)
 		else:
-			print "Forwarding the requst to the proper attacker gateway, {0}\n".format( self.hex_to_ip(agw_IP ))
-			self.three_way_handshake( packet_dest, agw_IP, load)
+			print "Forwarding the requst to the proper attacker gateway, {0}\n".format( agw_IP )
+			self.three_way_handshake( config_params.local_ip, agw_IP, load)
 
 
 	'''
