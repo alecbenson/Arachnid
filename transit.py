@@ -22,7 +22,7 @@ class AITF(Packet):
 	BitField("BytesPerHop",	0,	8),
 	BitField("PayloadProto", 0, 8),
 	BitField("Checksum",	0,	32),
-	XFieldLenField("length", None, length_of="RR", fmt="H"),
+	XFieldLenField("length", 0, length_of="RR", fmt="H"),
 	StrLenField("RR", "", length_from=lambda x:x.length)]
 
 
@@ -41,6 +41,63 @@ class Transit():
 		bind_layers(AITF, UDP, PayloadProto=17)
 
 
+	'''Takes in a block request and processes it'''
+	def manage_block_request(self, packet, load, escalation_level):
+		#1. Set a local filter and once it expires keep an entry in the shadow table
+		try:
+			#An entry is 8 characters long, so we use escalation index as 
+			#an index multiplier to find the correct IP address and nonce to block
+			escalation_index = 8*escalation_level
+
+			#IP address of the attacker
+			block_dest = load[ escalation_index : 8 + escalation_index ]
+
+			#If we are the intended receiver of the blocking request
+			agw_IP = load[ 8 + escalation_index : 16 + escalation_index ]
+			if packet.dst == self.hex_to_ip(agw_IP):
+				nonce = load[16 + escalation_index : 24 + escalation_index]
+				if self.is_valid_nonce(agw_IP, nonce):
+					shadow_table[block_dest] = time.time()
+					print "Installed a block request because the attacker, {0} is one hop from me, {1}".format(self.hex_to_ip(block_dest), self.hex_to_ip(agw_IP))
+					sys.exit()
+				else:
+					print "Got nonce value {0}, it's wrong\n".format(nonce)
+					sys.exit()
+			else:
+				print "I need to forward this block request to the attacker gateway, {0}\n".format( self.hex_to_ip(agw_IP ))
+				sys.exit()
+				return 
+		except ValueError:
+			pass
+
+
+	'''
+	Initiates a three way handshake between source IP and destination IP with payload 'payload'
+	'''
+	def three_way_handshake(self, src, dst, payload):
+				#Form the requst packet and shove the RR path in the payload
+		sport = random.randint(1024,65535)
+		seq= random.randint(1,100000)
+
+		#three way hannnndshakkeeeee!! (whaaat)
+		ip = IP(src=src, dst=dst )
+		tcp_syn = TCP(sport=sport, dport=80, flags='S', seq=seq)
+		tcp_synack = sr1(ip/tcp_syn)
+
+		#Respond with final ack!
+		#Note that there is a slight complication here. 
+		#Because of the way scapy works, the host is actually totally unaware that we are trying to open up a TCP connection.
+		#When it gets the synack back, our own host freaks out and tries to reset the connection.
+		#We can solve this by blocking outbound reset packets with an Ip table rule, but for now we'll just blissfully pretend that everything is okay. 
+		tcp_ack = TCP(sport=sport, dport=80, flags='A', seq=tcp_synack.ack, ack=tcp_synack.seq + 1)
+		send(ip/tcp_ack)
+
+		#Send the payload over
+		tcp_send = TCP(sport=sport, dport=80, flags="PA", seq=tcp_synack.ack, ack=tcp_synack.seq + 1)
+		send(ip/tcp_send/payload)
+
+
+
 	'''
 	Callback function for NfQueue. 
 	If the machine is in "host" mode, then it will check to see if it is receiving too much traffic.
@@ -49,18 +106,27 @@ class Transit():
 	def callback(self, packet):
 		if config_params.mode == "router":
 			pkt = IP(packet.get_payload())
-			#Packet is already shimmed
-			if pkt.haslayer(AITF):
-				pkt = self.update_AITF_shim(pkt)
-			#Packet has not been shimmed yet
+
+			#If the packet is destined to the router, we are likely receiving a block reqeuest
+			if pkt.dst == ni.ifaddresses('eth0')[2][0]['addr']:
+				if pkt.haslayer(TCP) & pkt.haslayer(Raw):
+					load = pkt[Raw].load
+					if "RRBLOCK:" in load:
+						self.manage_block_request(pkt, load, 1)
 			else:
-				pkt = self.add_AITF_shim(pkt)
-				
-			#Show2 will conveniently recalculate the IP checksum for us
-			del pkt.chksum
-			pkt.show2()
-			#Pack the packet with the new data
-			packet.set_payload( str(pkt) )
+				#Packet is already shimmed
+				if pkt.haslayer(AITF):
+					pkt = self.update_AITF_shim(pkt)
+				#Packet has not been shimmed yet
+				else:
+					pkt = self.add_AITF_shim(pkt)
+					
+				#Show2 will conveniently recalculate the IP checksum for us
+				del pkt.chksum
+				pkt.show2()
+				#Pack the packet with the new data
+				packet.set_payload( str(pkt) )
+
 		elif config_params.mode == "host":
 			self.check_traffic(packet)
 		else:
@@ -178,30 +244,11 @@ class Transit():
 		#We can't send a filter request without an AITF shim
 		if pkt.haslayer(AITF):
 			rr_path = pkt[AITF].RR
-			print "Sending a filtering request to block traffic from route {0}...\n".format( rr_path )
-			
-			#Form the requst packet and shove the RR path in the payload
 			src = ni.ifaddresses('eth0')[2][0]['addr']
-			sport = random.randint(1024,65535)
-			seq= random.randint(1,100000)
+			print "Sending a filtering request to block traffic from route {0}...\n".format( rr_path )
 
-			#three way hannnndshakkeeeee!! (whaaat)
-			ip = IP(src=src, dst=config_params.gateway_ip )
-			tcp_syn = TCP(sport=sport, dport=80, flags='S', seq=seq)
-			tcp_synack = sr1(ip/tcp_syn)
-
-			#Respond with final ack!
-			#Note that there is a slight complication here. 
-			#Because of the way scapy works, the host is actually totally unaware that we are trying to open up a TCP connection.
-			#When it gets the synack back, our own host freaks out and tries to reset the connection.
-			#We can solve this by blocking outbound reset packets with an Ip table rule, but for now we'll just blissfully pretend that everything is okay. 
-			tcp_ack = TCP(sport=sport, dport=80, flags='A', seq=tcp_synack.ack, ack=tcp_synack.seq + 1)
-			send(ip/tcp_ack)
-
-			#Send the payload over
-			payload = "RRBLOCK:" + rr_path
-			tcp_send = TCP(sport=sport, dport=80, flags="PA", seq=tcp_synack.ack, ack=tcp_synack.seq + 1)
-			send(ip/tcp_send/payload)
+			#Establish a three way handshake to send a filtering request
+			self.three_way_handshake(src, config_params.gateway_ip, "RRBLOCK:" + rr_path)
 		else:
 			print "No RR path attached to this packet, can't send filter request out :( "
 		return
@@ -212,17 +259,22 @@ class Transit():
 	Takes in a shimmed scapy packet object and updates the AITF fields accordingly
 	'''
 	def update_AITF_shim(self, packet):
-		try:
-			#Hash the destination IP of the packet to generate our nonce
-			packet_dest = packet[IP].dst
-			nonce = self.hash_ip(packet_dest)
+		#Hash the destination IP of the packet to generate our nonce
+		packet_dest = packet[IP].dst
+		nonce = self.hash_ip(packet_dest)
 
-			#Get eth0's ip address to store in the RR
-			local_ip = ni.ifaddresses('eth0')[2][0]['addr']
-			packet[AITF].RR += ( self.ip_to_hex(local_ip) + nonce)
-			packet[AITF].length += 16
-		except:
-			print "Error updating packet shim!\n"
+		#Get eth0's ip address to store in the RR
+		local_ip = ni.ifaddresses('eth0')[2][0]['addr']
+		path = packet[AITF].RR
+
+		#Path is empty
+		if not path:
+			path += self.ip_to_hex( packet.src )
+			packet[AITF].length += 8
+
+		path += ( self.ip_to_hex(local_ip) + nonce)
+		packet[AITF].RR = path
+		packet[AITF].length += 16
 
 		return packet
 
@@ -324,7 +376,10 @@ class Transit():
 def main():
 	global config_params
 	global route_list
+	global shadow_table
 	route_list = {}
+	shadow_table = {}
+
 	config_params = config.Configuration()
 	transit = Transit()
 
