@@ -100,10 +100,13 @@ class Transit():
 		if packet.dst in aitf_routers:
 			return aitf_routers[packet.dst]
 
-		probe = IP(src=config_params.local_ip, dst=packet.dst, ttl=1)/ICMP()
+		probe = IP(src=config_params.local_ip, dst=packet.dst, ttl=1)/ICMP(code=4)
 		response = sr1(probe,timeout=1)
+		response.show()
+
+		#We got a response from the next hop and it is not the host
 		if response.type == 11:
-			if response.code == 2:
+			if response[ICMPerror].code == 2:
 				aitf_routers[packet.dst]=True
 				return True
 			else:
@@ -111,12 +114,9 @@ class Transit():
 				return False
 		#We have reached the end host
 		elif packet.dst == response.src:
-			if response.code == 2:
-				aitf_routers[packet.dst]=True
-				return True
-			else:
-				aitf_routers[packet.dst]=False
-				return False
+			aitf_routers[packet.dst]=True
+			return True
+		return False
 		
 
 	'''
@@ -129,13 +129,12 @@ class Transit():
 
 		#Intercept ICMP Time Exceeded Packets and indicate that we are AITF enabled
 		if pkt.haslayer(ICMP):
-			if pkt[ICMP].type == 11 or pkt[ICMP].type == 0:
-				if pkt[ICMP].code == 0:
-					pkt[ICMP].code = 2
-					packet.set_payload( str(pkt) )
-					packet.accept()
-					pkt.show()
-					return
+			#We got probed by another router, set AITF code 2 in response
+			if pkt[ICMP].code == 4:
+				pkt[ICMP].code = 2
+				packet.set_payload( str(pkt) )
+				packet.accept()
+				return
 
 		if config_params.mode == "router":
 			#Check to make sure the source isn't blocked
@@ -150,7 +149,6 @@ class Transit():
 			if not self.probe_AITF(pkt):
 				packet.accept()
 				print "Next hop not enabled: not shimming\n"
-				pkt.show()
 				return
 
 
@@ -383,13 +381,15 @@ class Transit():
 	def setup_commands(self):
 		if config_params.mode == "router":
 			iptb_forward = "sudo iptables -I FORWARD -d {0} -j NFQUEUE --queue-num 1".format(config_params.local_subnet)
-			iptb_input = "sudo iptables -I INPUT -p tcp --dport 80 -d {0} -j NFQUEUE --queue-num 1".format(config_params.local_subnet)
+			iptb_tcp_input = "sudo iptables -I INPUT -p tcp --dport 80 -d {0} -j NFQUEUE --queue-num 1".format(config_params.local_subnet)		
+			iptb_probe_input = "sudo iptables -I INPUT -p icmp -d {0} -j NFQUEUE --queue-num 1".format(config_params.local_subnet)
 			ipv4_forwarding = "sudo sysctl -w net.ipv4.ip_forward=1"
 			icmp_send = "echo 0 | sudo tee /proc/sys/net/ipv4/conf/*/send_redirects"
 			icmp_accept = "echo 0 | sudo tee /proc/sys/net/ipv4/conf/*/send_redirects"
 
 			call( iptb_forward.split() )
-			call( iptb_input.split() )
+			call( iptb_tcp_input.split() )
+			call( iptb_probe_input.split() )
 			call( ipv4_forwarding.split() )
 			call( icmp_send.split() )
 			call( icmp_accept.split() )
@@ -397,11 +397,9 @@ class Transit():
 		elif config_params.mode == "host":
 			iptb_tcp_input = "sudo iptables -I INPUT -p tcp --dport 80 -d {0} -j NFQUEUE --queue-num 1".format(config_params.local_subnet)
 			iptb_input = "sudo iptables -I INPUT ! -p tcp -d {0} -j NFQUEUE --queue-num 1".format(config_params.local_subnet)
-			iptb_icmp_output = "sudo iptables -I OUTPUT -p icmp -d {0} -j NFQUEUE --queue-num 1".format(config.params.local_subnet)
 
 			call( iptb_input.split() )
 			call( iptb_tcp_input.split() )
-			call( iptb_icmp_output.split() )
 
 
 	'''
