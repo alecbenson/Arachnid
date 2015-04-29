@@ -100,6 +100,8 @@ class Transit():
 		if packet.dst in aitf_routers:
 			return aitf_routers[packet.dst]
 
+		#Guilty until proven innocent. Assume legacy.
+		aitf_routers[packet.dst] = False
 		probe = IP(src=config_params.local_ip, dst=packet.dst, ttl=1)/ICMP(code=4)
 		send(probe)
 		
@@ -111,24 +113,33 @@ class Transit():
 	'''
 	def callback(self, packet):
 		pkt = IP(packet.get_payload())
-		if pkt.haslayer(ICMPerror):
-			if pkt.src == config_params.local_ip:
-				pkt[ICMPerror].code = 2
-				print "Responded to {0}'s AITF probe message\n".format( pkt.dst )
-				packet.set_payload( str(pkt) )
+		if pkt.haslayer(ICMP):
+			if pkt.haslayer(ICMPerror):
+				if pkt.src == config_params.local_ip:
+					pkt[ICMPerror].code = 2
+					print "Responded to {0}'s AITF probe message\n".format( pkt.dst )
+					packet.set_payload( str(pkt) )
+					packet.accept()
+					return
+				elif pkt.dst == config_params.local_ip:
+					dst = pkt[IPerror].dst
+					if pkt[ICMPerror].code == 2:
+						aitf_routers[dst] = True
+						print "{0} is an AITF enabled router\n".format( pkt.src )
+						packet.accept()
+					else:
+						aitf_routers[dst] = False
+						print "{0} is NOT an AITF enabled router\n".format( pkt.src )
+						packet.accept()
+					return
+			elif pkt[ICMP].type == 0:
+				if pkt[ICMP].code == 4:
+					aitf_routers[pkt.src] = False
+				elif pkt[ICMP].code == 2:
+					aitf_routers[pkt.src] = True
 				packet.accept()
 				return
-			elif pkt.dst == config_params.local_ip:
-				dst = pkt[IPerror].dst
-				if pkt[ICMPerror].code == 2:
-					aitf_routers[dst] = True
-					print "{0} is an AITF enabled router\n".format( pkt.src )
-					packet.accept()
-				else:
-					aitf_routers[dst] = False
-					print "{0} is NOT an AITF enabled router\n".format( pkt.src )
-					packet.accept()
-				return
+				
 
 		#Intercept ICMP Time Exceeded Packets and indicate that we are AITF enabled
 		if config_params.mode == "router":
@@ -169,6 +180,12 @@ class Transit():
 				packet.set_payload( str(pkt) )
 
 		elif config_params.mode == "host":
+			if pkt.haslayer(ICMP):
+				if pkt[ICMP].type == 0 and pkt[ICMP].code == 4:
+					pkt[ICMP].code = 2
+					packet.set_payload( str(pkt) )
+					packet.aceept()
+					return
 			self.check_traffic(packet)
 			
 			#Chop the AITF shim off so the OS can interpret it
