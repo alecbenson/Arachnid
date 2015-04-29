@@ -367,6 +367,7 @@ class Transit():
 			iptb_forward = "sudo iptables -I FORWARD -d {0} -j NFQUEUE --queue-num 1".format(config_params.local_subnet)
 			iptb_tcp_input = "sudo iptables -I INPUT -p tcp --dport 80 -d {0} -j NFQUEUE --queue-num 1".format(config_params.local_subnet)		
 			iptb_probe_input = "sudo iptables -I INPUT -p icmp -d {0} -j NFQUEUE --queue-num 1".format(config_params.local_subnet)
+			iptb_probe_output = "sudo iptables -I OUTPUT -p icmp -d {0} -j NFQUEUE --queue-num 1".format(config_params.local_subnet)
 			ipv4_forwarding = "sudo sysctl -w net.ipv4.ip_forward=1"
 			icmp_send = "echo 0 | sudo tee /proc/sys/net/ipv4/conf/*/send_redirects"
 			icmp_accept = "echo 0 | sudo tee /proc/sys/net/ipv4/conf/*/send_redirects"
@@ -374,6 +375,7 @@ class Transit():
 			call( iptb_forward.split() )
 			call( iptb_tcp_input.split() )
 			call( iptb_probe_input.split() )
+			call( iptb_probe_output.split() )
 			call( ipv4_forwarding.split() )
 			call( icmp_send.split() )
 			call( icmp_accept.split() )
