@@ -46,17 +46,17 @@ class Transit():
 		#1. Set a local filter and once it expires keep an entry in the shadow table
 		#An entry is 8 characters long, so we use escalation index as 
 		#an index multiplier to find the correct IP address and nonce to block
-		escalation_index = 8*escalation_level
+		escalation_index = 16*escalation_level
 
 		#Agw is the attacker gateway. We can find it in this part of the RR
-		agw_IP = self.hex_to_ip( load[ 8 + escalation_index : 16 + escalation_index ] )
+		agw_IP = self.hex_to_ip( load[ 16 + escalation_index : 24 + escalation_index ] )
 
 		#If we are the attacker's gateway (or the next gateway in the event of escalation)
 		if packet.dst == agw_IP:
-			nonce = load[16 + escalation_index : 24 + escalation_index]
+			nonce = load[24 + escalation_index : 32 + escalation_index]
 			if self.is_valid_nonce(agw_IP, nonce):
 				#IP address of the attacker. We can find it in this part of the RR
-				block_dest = self.hex_to_ip( load[ escalation_index : 8 + escalation_index ] )
+				block_dest = self.hex_to_ip( load[ 8 + escalation_index : 16 + escalation_index ] )
 				shadow_table[block_dest] = time.time()
 				print "Installed filter: attacker {0} is one hop from me, {1}".format(block_dest,agw_IP)
 			else:
@@ -116,7 +116,7 @@ class Transit():
 					pkt.show()
 					load = str(pkt[Raw].load)
 					if "RRBLOCK:" in load:
-						self.manage_block_request(pkt, load, 1)
+						self.manage_block_request(pkt, load, 0)
 			else:
 				#Packet is already shimmed
 				if pkt.haslayer(AITF):
@@ -282,8 +282,8 @@ class Transit():
 
 		#Path is empty
 		if not path:
-			path += self.ip_to_hex( packet.src )
-			packet[AITF].length += 8
+			path += self.ip_to_hex( packet.src ) + "ffffffff"
+			packet[AITF].length += 16
 
 		path += ( self.ip_to_hex( config_params.local_ip ) + nonce)
 		packet[AITF].RR = path
