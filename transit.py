@@ -109,11 +109,14 @@ class Transit():
 			else:
 				aitf_routers[packet.dst]=False
 				return False
-
 		#We have reached the end host
 		elif packet.dst == response.src:
-			aitf_routers[packet.dst]=True
-			return True
+			if response.code == 2:
+				aitf_routers[packet.dst]=True
+				return True
+			else:
+				aitf_routers[packet.dst]=False
+				return False
 		
 
 	'''
@@ -123,6 +126,17 @@ class Transit():
 	'''
 	def callback(self, packet):
 		pkt = IP(packet.get_payload())
+
+		#Intercept ICMP Time Exceeded Packets and indicate that we are AITF enabled
+		if pkt.haslayer(ICMP):
+			if pkt[ICMP].type == 11 or pkt[ICMP].type == 0:
+				if pkt[ICMP].code == 0:
+					pkt[ICMP].code = 2
+					packet.set_payload( str(pkt) )
+					packet.accept()
+					pkt.show()
+					return
+
 		if config_params.mode == "router":
 			#Check to make sure the source isn't blocked
 			if pkt.src in shadow_table:
@@ -133,17 +147,12 @@ class Transit():
 					return
 
 			#We check if the next hop is AITF enabled and shim packets if it is. Otherwise, continue to send legacy packets
-			if not self.probe_AITF(packet):
+			if not self.probe_AITF(pkt):
 				packet.accept()
+				print "Next hop not enabled: not shimming\n"
+				pkt.show()
 				return
 
-			#Intercept ICMP Time Exceeded Packets and indicate that we are AITF enabled
-			if pkt.haslayer(ICMP):
-				if pkt[ICMP].type == 11 and pkt[ICMP].code == 0:
-					pkt[ICMP].code = 2
-					packet.set_payload( str(pkt) )
-					packet.accept()
-					return	
 
 			#If the packet is destined to the router, we are likely receiving a block reqeuest
 			if pkt.dst == config_params.local_ip:
@@ -388,9 +397,11 @@ class Transit():
 		elif config_params.mode == "host":
 			iptb_tcp_input = "sudo iptables -I INPUT -p tcp --dport 80 -d {0} -j NFQUEUE --queue-num 1".format(config_params.local_subnet)
 			iptb_input = "sudo iptables -I INPUT ! -p tcp -d {0} -j NFQUEUE --queue-num 1".format(config_params.local_subnet)
+			iptb_icmp_output = "sudo iptables -I OUTPUT -p icmp -d {0} -j NFQUEUE --queue-num 1".format(config.params.local_subnet)
 
 			call( iptb_input.split() )
 			call( iptb_tcp_input.split() )
+			call( iptb_icmp_output.split() )
 
 
 	'''
@@ -422,6 +433,7 @@ def main():
 	global config_params
 	global route_list
 	global shadow_table
+	global aitf_routers
 	route_list = {}
 	shadow_table = {}
 	aitf_routers = {}
