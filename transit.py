@@ -135,6 +135,17 @@ class Transit():
 				packet.set_payload( str(pkt) )
 				packet.accept()
 				return
+			#We received a response from the probe
+			elif pkt.haslayer(ICMPerror) and pkt.haslayer(IPerror):
+				dst = pkt[IPerror].dst
+				if pkt[ICMPerror].code == 2 and pkt[ICMP].type == 11:
+					print "\n\n{0} is AITF enabled!!\n\n".format( pkt.src )
+					aitf_routers[dst] = True
+				else:
+					print "\n\n{0} is NOT AITF enabled!!\n\n".format( pkt.src )
+					aitf_routers[dst] = False
+				packet.accept()	
+				return
 
 		if config_params.mode == "router":
 			#Check to make sure the source isn't blocked
