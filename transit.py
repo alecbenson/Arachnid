@@ -14,8 +14,8 @@ class XFieldLenField(FieldLenField):
 '''This class is used to represent the structure of an AITF shim'''
 class AITF(Packet):
 	name = "AITF"
-	fields_desc = [BitField("PayloadProto", 0, 8),
-	XFieldLenField("length", 0, length_of="RR", fmt="H"),
+	fields_desc = [BitField("PayloadProto", None, 8),
+	XFieldLenField("length", None, length_of="RR", fmt="H"),
 	StrLenField("RR", "", length_from=lambda x:x.length)]
 
 
@@ -328,25 +328,24 @@ class Transit():
 
 		#Packet is shimmed already, just update the fields
 		if pkt.haslayer(AITF):
+			del pkt[AITF].length
 			path = pkt[AITF].RR
 			path += ( self.ip_to_hex( config_params.local_ip ) + nonce)
 			pkt[AITF].RR = path
-			pkt[AITF].length += 16
 
 		#Packet has no shim yet
 		else:
 			iplayer = pkt[IP]
-			iplayer.proto = 145
 			payload = pkt.payload
 			iplayer.remove_payload()
 
 			aitf = AITF()
 			aitf.RR = self.ip_to_hex( pkt.src ) + "ffffffff"
 			aitf.RR += ( self.ip_to_hex( config_params.local_ip ) + nonce)
-			aitf.length += 32
 			pkt = iplayer/aitf/payload
 
 		del pkt.chksum
+		del pkt.proto
 		pkt.show2()
 		return pkt
 
@@ -358,8 +357,9 @@ class Transit():
 	'''
 	def remove_AITF_shim(self, orig_pkt):
 		if orig_pkt.haslayer(AITF):
-			iplayer = orig_pkt[IP]
+			del orig_pkt[AITF].PayloadProto
 			payload = orig_pkt[AITF].payload
+			iplayer = orig_pkt[IP]
 			iplayer.remove_payload()
 
 			new_pkt = iplayer/payload
@@ -367,6 +367,7 @@ class Transit():
 			new_pkt.show2()
 			return new_pkt
 		return orig_pkt
+
 
 
 	'''
