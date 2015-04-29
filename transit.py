@@ -394,9 +394,9 @@ def main():
 	global config_params
 	global route_list
 	global shadow_table
-	route_list = {}
-	shadow_table = {}
-	aitf_routers = {}
+	route_list = {} #Stored as a dictionary of xx.xx.xx.xx ip addresses (formed with inet_ntoa) and a tuple of (packet_len , current_time)
+	shadow_table = {} #Stored as a dictionary of xx.xx.xx.xx ip addresses (formed with inet ntoa) and a time at which the block will end.
+	aitf_routers = {} #Stored as dictionary of IP addresses and a boolean of whether or not the next hop towards this destination is AITF enabled
 
 	config_params = config.Configuration()
 	transit = Transit()
