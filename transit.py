@@ -246,6 +246,10 @@ class Transit():
 	'''
 
 	def send_filter_request(self, packet):
+		#If the router is a liar, do not actually filter.
+		if config_params.is_liar:
+			returns
+	
 		#Get the real IP address
 		pkt = IP(packet.get_payload())
 
