@@ -91,7 +91,30 @@ class Transit():
 		tcp_send = TCP(sport=sport, dport=80, flags="PA", seq=tcp_synack.ack, ack=tcp_synack.seq + 1)
 		send(ip/tcp_send/payload)
 
+	
+	'''
+	Probes the next hope for AITF support by sending a packet with TTL 1 and looking for code 2 in the response.
+	We use code 2 because it is never used for Time Exceeded ICMP responses and we can use it to identify AITF enabled routers
+	'''
+	def probe_AITF(self, packet):
+		if packet.dst in aitf_routers:
+			return aitf_routers[packet.dst]
 
+		probe = IP(src=config_params.local_ip, dst=packet.dst, ttl=1)/ICMP()
+		response = sr1(probe,timeout=1)
+		if response.type == 11:
+			if response.code == 2:
+				aitf_routers[packet.dst]=True
+				return True
+			else:
+				aitf_routers[packet.dst]=False
+				return False
+
+		#We have reached the end host
+		elif packet.dst == response.src:
+			aitf_routers[packet.dst]=True
+			return True
+		
 
 	'''
 	Callback function for NfQueue. 
@@ -99,9 +122,8 @@ class Transit():
 	If the machine is in "router" mode, then it will shim packets
 	'''
 	def callback(self, packet):
+		pkt = IP(packet.get_payload())
 		if config_params.mode == "router":
-			pkt = IP(packet.get_payload())
-
 			#Check to make sure the source isn't blocked
 			if pkt.src in shadow_table:
 				time_left = (shadow_table[pkt.src] + config_params.filter_duration) - time.time()
@@ -109,6 +131,19 @@ class Transit():
 					print "Dropping packet from {0}. Still {1} seconds left in filter".format(pkt.src, time_left)
 					packet.drop()
 					return
+
+			#We check if the next hop is AITF enabled and shim packets if it is. Otherwise, continue to send legacy packets
+			if not self.probe_AITF(packet):
+				packet.accept()
+				return
+
+			#Intercept ICMP Time Exceeded Packets and indicate that we are AITF enabled
+			if pkt.haslayer(ICMP):
+				if pkt[ICMP].type == 11 and pkt[ICMP].code == 0:
+					pkt[ICMP].code = 2
+					packet.set_payload( str(pkt) )
+					packet.accept()
+					return	
 
 			#If the packet is destined to the router, we are likely receiving a block reqeuest
 			if pkt.dst == config_params.local_ip:
@@ -133,6 +168,11 @@ class Transit():
 
 		elif config_params.mode == "host":
 			self.check_traffic(packet)
+			
+			#Chop the AITF shim off so the OS can interpret it
+			pkt = self.remove_AITF_shim(pkt)
+			packet.set_payload( str(pkt) )
+			
 		else:
 			print "Unrecognized mode set in the config: {0}\n".format(config_params.mode)
 			sys.exit()
@@ -260,14 +300,6 @@ class Transit():
 			print "No RR path attached to this packet, can't send filter request out :( "
 		return
 
-	'''
-	Checks if the next hop is RR enabled
-	'''
-	def check_if_rr_enable(self, pkt):
-		src = config_params.local_ip
-		dst = pkt.dst
-		probe = IP(src=src, dst=dst)/ICMP(type="rrenable", ttl=1)
-		send(probe)
 
 	'''
 	Takes in a shimmed scapy packet object and updates the AITF fields accordingly
