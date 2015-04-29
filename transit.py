@@ -111,29 +111,15 @@ class Transit():
 	'''
 	def callback(self, packet):
 		pkt = IP(packet.get_payload())
+		pkt.show()
+		if pkt.haslayer(ICMPerror) and pkt.src == config_params.local_ip:
+			pkt[ICMPerror].code = 2
+			print "Set {0}'s probe with code 2\n".format( pkt.dst )
+			packet.set_payload( str(pkt) )
+			packet.accept()
+			return
 
 		#Intercept ICMP Time Exceeded Packets and indicate that we are AITF enabled
-		if pkt.haslayer(ICMP):
-			#We got probed by another router, set AITF code 2 in response
-			if pkt[ICMP].code == 4:
-				print "\n\nsetting probe request from {0} to have code 2...!\n\n".format(pkt.src)
-				pkt[ICMP].code = 2
-				packet.set_payload( str(pkt) )
-				packet.accept()
-				return
-			#We received a response from the probe
-			elif pkt.haslayer(ICMPerror) and pkt.haslayer(IPerror):
-				pkt.show()
-				dst = pkt[IPerror].dst
-				if pkt[ICMPerror].code == 2 and pkt[ICMP].type == 11:
-					print "\n\n{0} is AITF enabled!!\n\n".format( pkt.src )
-					aitf_routers[dst] = True
-				else:
-					print "\n\n{0} is NOT AITF enabled!!\n\n".format( pkt.src )
-					aitf_routers[dst] = False
-				packet.accept()	
-				return
-
 		if config_params.mode == "router":
 			#Check to make sure the source isn't blocked
 			if pkt.src in shadow_table:
