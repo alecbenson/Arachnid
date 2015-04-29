@@ -93,13 +93,12 @@ class Transit():
 			#Remove AITF shims and send the packet on
 			if aitf_routers[pkt.dst] == False:
 				pkt = self.remove_AITF_shim(pkt)
-				return pkt
-
 			#Next hop is AITF enabled, add/Update AITF shim
 			else:
 				pkt = self.shim_packet(pkt)
 
 			packet.set_payload( str(pkt) )
+			packet.accept()
 			return pkt
 
 		pkt = self.remove_AITF_shim(pkt)
@@ -348,6 +347,7 @@ class Transit():
 			pkt = iplayer/aitf/payload
 
 		del pkt.chksum
+		pkt.show2()
 		return pkt
 
 
@@ -364,6 +364,7 @@ class Transit():
 
 			new_pkt = iplayer/payload
 			del new_pkt.chksum
+			new_pkt.show2()
 			return new_pkt
 		return orig_pkt
 
