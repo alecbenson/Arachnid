@@ -18,10 +18,7 @@ class XFieldLenField(FieldLenField):
 '''This class is used to represent the structure of an AITF shim'''
 class AITF(Packet):
 	name = "AITF"
-	fields_desc = [XBitField("PK",0,48),
-	BitField("BytesPerHop",	0,	8),
-	BitField("PayloadProto", 0, 8),
-	BitField("Checksum",	0,	32),
+	fields_desc = [BitField("PayloadProto", 0, 8),
 	XFieldLenField("length", 0, length_of="RR", fmt="H"),
 	StrLenField("RR", "", length_from=lambda x:x.length)]
 
@@ -113,36 +110,43 @@ class Transit():
 	'''
 	def callback(self, packet):
 		pkt = IP(packet.get_payload())
-		if pkt.haslayer(ICMP):
-			if pkt.haslayer(ICMPerror):
-				if pkt.src == config_params.local_ip:
-					pkt[ICMPerror].code = 2
-					print "Responded to {0}'s AITF probe message\n".format( pkt.dst )
-					packet.set_payload( str(pkt) )
-					packet.accept()
-					return
-				elif pkt.dst == config_params.local_ip:
-					dst = pkt[IPerror].dst
-					if pkt[ICMPerror].code == 2:
-						aitf_routers[dst] = True
-						print "{0} is an AITF enabled router\n".format( pkt.src )
+		if config_params.mode == "router":
+
+			#Intercept ICMP Time Exceeded Packets and indicate that we are AITF enabled
+			if pkt.haslayer(ICMP):
+				if pkt.haslayer(ICMPerror):
+					if pkt.src == config_params.local_ip:
+						pkt[ICMPerror].code = 2
+						del pkt.chksum
+						print "Responded to {0}'s AITF probe message\n".format( pkt.dst )
+						pkt.show2()
+						packet.set_payload( str(pkt) )
 						packet.accept()
-					else:
-						aitf_routers[dst] = False
-						print "{0} is NOT an AITF enabled router\n".format( pkt.src )
+						return
+					elif pkt.dst == config_params.local_ip:
+						dst = pkt[IPerror].dst
+						if pkt[ICMPerror].code == 2:
+							aitf_routers[dst] = True
+							print "{0} is an AITF enabled router\n".format( pkt.src )
+							pkt.show()
+							packet.accept()
+						else:
+							aitf_routers[dst] = False
+							print "{0} is NOT an AITF enabled router\n".format( pkt.src )
+							pkt.show()
+							packet.accept()
+						return
+				elif pkt[ICMP].type == 0:
+					if pkt[ICMP].code == 4:
+						aitf_routers[pkt.src] = False
 						packet.accept()
-					return
-			elif pkt[ICMP].type == 0:
-				if pkt[ICMP].code == 4:
-					aitf_routers[pkt.src] = False
-				elif pkt[ICMP].code == 2:
-					aitf_routers[pkt.src] = True
-				packet.accept()
-				return
+						return
+					elif pkt[ICMP].code == 2:
+						aitf_routers[pkt.src] = True
+						packet.accept()
+						return
 				
 
-		#Intercept ICMP Time Exceeded Packets and indicate that we are AITF enabled
-		if config_params.mode == "router":
 			#Check to make sure the source isn't blocked
 			if pkt.src in shadow_table:
 				time_left = (shadow_table[pkt.src] + config_params.filter_duration) - time.time()
@@ -154,14 +158,13 @@ class Transit():
 			#We check if the next hop is AITF enabled and shim packets if it is. Otherwise, continue to send legacy packets
 			if not self.probe_AITF(pkt):
 				packet.accept()
-				print "Next hop not enabled: not shimming\n"
+				print "Next hop towards {0} not AITF enabled, can't shim packets\n".format(pkt.dst)
 				return
 
 
 			#If the packet is destined to the router, we are likely receiving a block reqeuest
 			if pkt.dst == config_params.local_ip:
 				if pkt.haslayer(TCP) & pkt.haslayer(Raw):
-					pkt.show()
 					load = str(pkt[Raw].load)
 					if "RRBLOCK:" in load:
 						self.manage_block_request(pkt, load, 0)
@@ -183,8 +186,10 @@ class Transit():
 			if pkt.haslayer(ICMP):
 				if pkt[ICMP].type == 0 and pkt[ICMP].code == 4:
 					pkt[ICMP].code = 2
+					del pkt.chksum
+					pkt.show2()
 					packet.set_payload( str(pkt) )
-					packet.aceept()
+					packet.accept()
 					return
 			self.check_traffic(packet)
 			
