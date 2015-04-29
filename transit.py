@@ -6,10 +6,6 @@ from subprocess import call
 import socket, sys, time, config, random
 import binascii, threading, dpkt, atexit
 
-'''Exception for if we get packets that don't have an AITF layer'''
-class No_AITF_Shim(Exception):
-	pass
-
 '''This class is used to help determine the length of the RR field when decoding packets'''
 class XFieldLenField(FieldLenField):
     def i2repr(self, pkt, x):
@@ -88,6 +84,87 @@ class Transit():
 		tcp_send = TCP(sport=sport, dport=80, flags="PA", seq=tcp_synack.ack, ack=tcp_synack.seq + 1)
 		send(ip/tcp_send/payload)
 
+	'''
+	Probes the next hope for AITF support by sending a packet with TTL 1 and looking for code 2 in the response.
+	We use code 2 because it is never used for Time Exceeded ICMP responses and we can use it to identify AITF enabled routers
+	'''
+	def forward_packet(self, pkt, packet):
+		if packet.dst in aitf_routers:
+			#Remove AITF shims and send the packet on
+			if aitf_routers[packet.dst] == False:
+				pkt = self.remove_AITF_shim(pkt)
+				return
+
+			#Next hop is AITF enabled, add/Update AITF shim
+			else:
+				pkt = self.shim_packet(pkt)
+
+			packet.set_payload( str(pkt) )
+			return
+
+
+		#There is no entry for this packet yet, send a probe out
+		aitf_routers[packet.dst] = False
+		probe = IP(src=config_params.local_ip, dst=packet.dst, ttl=1)/ICMP(code=4)
+		send(probe)
+		packet.accept()
+
+	'''
+	Processes AITF probes and determines if the router/host is legacy or AITF enabled
+	Returns either the query packet we received, or the response packet of our probe
+	'''
+	def handle_AITF_probe(self, pkt, packet):
+		if pkt.haslayer(ICMP):
+				if pkt.haslayer(ICMPerror):
+					#We were queried by another AITF enabled host, respond as AITF enabled
+					if pkt.src == config_params.local_ip:
+						pkt[ICMPerror].code = 2
+						del pkt.chksum
+						print "Responded to {0}'s AITF probe message\n".format( pkt.dst )
+						packet.set_payload( str(pkt) )
+						packet.accept()
+
+					#We received the response of our previous query
+					elif pkt.dst == config_params.local_ip:
+						dst = pkt[IPerror].dst
+						if pkt[ICMPerror].code == 2:
+							aitf_routers[dst] = True
+							print "{0} is an AITF enabled router\n".format( pkt.src )
+							packet.accept()
+						else:
+							aitf_routers[dst] = False
+							print "{0} is NOT an AITF enabled router\n".format( pkt.src )
+							packet.accept()
+
+				#Our probe didn't expire, the next hop is the destination
+				elif pkt[ICMP].type == 0:
+					if pkt[ICMP].code == 4:
+						aitf_routers[pkt.src] = False
+						packet.accept()
+					elif pkt[ICMP].code == 2:
+						aitf_routers[pkt.src] = True
+						packet.accept()
+
+
+	def check_block_table(self, pkt, packet):
+			#Check to make sure the source isn't blocked
+			if pkt.src in shadow_table:
+				time_left = (shadow_table[pkt.src] + config_params.filter_duration) - time.time()
+				if time_left > 0:
+					print "Dropping packet from {0}. Still {1} seconds left in filter".format(pkt.src, time_left)
+					packet.drop()
+
+
+	def handle_block_request(self, pkt, packet):
+			#If the packet is destined to the router, we are likely receiving a block reqeuest
+			if pkt.dst == config_params.local_ip:
+				if pkt.haslayer(TCP) and pkt.haslayer(Raw):
+					load = str(pkt[Raw].load)
+					if "RRBLOCK:" in load:
+						self.manage_block_request(pkt, load, 0)
+
+
+
 
 
 	'''
@@ -100,33 +177,16 @@ class Transit():
 			pkt = IP(packet.get_payload())
 
 			#Check to make sure the source isn't blocked
-			if pkt.src in shadow_table:
-				time_left = (shadow_table[pkt.src] + config_params.filter_duration) - time.time()
-				if time_left > 0:
-					print "Dropping packet from {0}. Still {1} seconds left in filter".format(pkt.src, time_left)
-					packet.drop()
-					return
+			self.check_block_table(pkt, packet)
+			#Check if the packet is a probe, deal with it accordingly
+			self.handle_AITF_probe(pkt, packet)
+			#Check if the packet is a block request, deal with it accordingly
+			self.handle_block_request(pkt, packet)
+			#We check if the next hop is AITF enabled and shim packets if it is. Otherwise, remove the shim.
+			self.forward_packet(pkt, packet)
 
-			#If the packet is destined to the router, we are likely receiving a block reqeuest
-			if pkt.dst == config_params.local_ip:
-				if pkt.haslayer(TCP) & pkt.haslayer(Raw):
-					pkt.show()
-					load = str(pkt[Raw].load)
-					if "RRBLOCK:" in load:
-						self.manage_block_request(pkt, load, 0)
-			else:
-				#Packet is already shimmed
-				if pkt.haslayer(AITF):
-					pkt = self.update_AITF_shim(pkt)
-				#Packet has not been shimmed yet
-				else:
-					pkt = self.add_AITF_shim(pkt)
-					
-				#Show2 will conveniently recalculate the IP checksum for us
-				del pkt.chksum
-				pkt.show2()
-				#Pack the packet with the new data
-				packet.set_payload( str(pkt) )
+			#Send the packet on
+			self.forward_packet(pkt, packet)
 
 		elif config_params.mode == "host":
 			self.check_traffic(packet)
@@ -262,45 +322,36 @@ class Transit():
 		return
 
 	'''
-	Takes in a shimmed scapy packet object and updates the AITF fields accordingly
+	Takes in a packet and adds/updates the packet shim
 	'''
-	def update_AITF_shim(self, packet):
+	def shim_packet(self, pkt):
 		#Hash the destination IP of the packet to generate our nonce
-		packet_dest = packet[IP].dst
+		packet_dest = pkt[IP].dst
 		nonce = self.hash_ip(packet_dest)
 
-		#Get eth0's ip address to store in the RR
-		path = packet[AITF].RR
+		#Packet is shimmed already, just update the fields
+		if pkt.haslayer(AITF):
+			path = pkt[AITF].RR
+			path += ( self.ip_to_hex( config_params.local_ip ) + nonce)
+			pkt[AITF].RR = path
+			pkt[AITF].length += 16
 
-		#Path is empty
-		if not path:
-			path += self.ip_to_hex( packet.src ) + "ffffffff"
-			packet[AITF].length += 16
+		#Packet has no shim yet
+		else:
+			iplayer = pkt[IP]
+			iplayer.proto = 145
+			payload = pkt.payload
+			iplayer.remove_payload()
 
-		path += ( self.ip_to_hex( config_params.local_ip ) + nonce)
-		packet[AITF].RR = path
-		packet[AITF].length += 16
+			aitf = AITF()
+			aitf.RR = self.ip_to_hex( pkt.src ) + "ffffffff"
+			aitf.RR += ( self.ip_to_hex( config_params.local_ip ) + nonce)
+			aitf.length += 32
+			pkt = iplayer/aitf/payload
 
-		return packet
-
-
-	'''
-	orig_pkt - a scapy packet that needs an AITF shim
-	returns the updated scapy packet
-	'''
-	def add_AITF_shim(self, orig_pkt):
-		#Get the packet and structure it as a scapy packet object
-
-		iplayer = orig_pkt[IP]
-		iplayer.proto = 145
-		payload = orig_pkt.payload
-		iplayer.remove_payload()
-
-		aitf = AITF()
-		new_pkt = iplayer/aitf/payload
-		new_pkt = self.update_AITF_shim(new_pkt)
-
-		return new_pkt
+		del pkt.chksum
+		pkt.show2()
+		return pkt
 
 
 
@@ -315,11 +366,9 @@ class Transit():
 			iplayer.remove_payload()
 
 			new_pkt = iplayer/payload
+			del new_pkt.chksum
+			new_pkt.show2()
 			return new_pkt
-		else:
-			raise No_AITF_Shim("Tried to remove non-existent AITF layer")
-			return
-
 
 
 	'''
@@ -334,6 +383,7 @@ class Transit():
 	def setup_commands(self):
 		if config_params.mode == "router":
 			iptb_forward = "sudo iptables -I FORWARD -d {0} -j NFQUEUE --queue-num 1".format(config_params.local_subnet)
+			iptb_probe_output = "sudo iptables -I OUTPUT -p icmp -d {0} -j NFQUEUE --queue-num 1".format(config_params.local_subnet)
 			iptb_input = "sudo iptables -I INPUT -p tcp --dport 80 -d {0} -j NFQUEUE --queue-num 1".format(config_params.local_subnet)
 			ipv4_forwarding = "sudo sysctl -w net.ipv4.ip_forward=1"
 			icmp_send = "echo 0 | sudo tee /proc/sys/net/ipv4/conf/*/send_redirects"
@@ -341,6 +391,7 @@ class Transit():
 
 			call( iptb_forward.split() )
 			call( iptb_input.split() )
+			call( iptb_probe_output.split() )
 			call( ipv4_forwarding.split() )
 			call( icmp_send.split() )
 			call( icmp_accept.split() )
@@ -395,6 +446,7 @@ def main():
 
 	transit.bind_packet_layers()
 	transit.net_filter()
+
 	
 
 if __name__ == "__main__":
