@@ -354,7 +354,7 @@ class Transit():
 
 	'''
 	orig_pkt - a scapy packet that needs an AITF shim
-	returns the updated scapy packet
+	returns the updated scapy packet, or the same packet if no AITF shim exists
 	'''
 	def remove_AITF_shim(self, orig_pkt):
 		if orig_pkt.haslayer(AITF):
@@ -365,6 +365,7 @@ class Transit():
 			new_pkt = iplayer/payload
 			del new_pkt.chksum
 			return new_pkt
+		return orig_pkt
 
 
 	'''
