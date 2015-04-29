@@ -346,6 +346,7 @@ class Transit():
 
 		del pkt.chksum
 		del pkt.proto
+		del pkt.len
 		pkt.show2()
 		return pkt
 
@@ -357,13 +358,14 @@ class Transit():
 	'''
 	def remove_AITF_shim(self, orig_pkt):
 		if orig_pkt.haslayer(AITF):
-			del orig_pkt[AITF].PayloadProto
 			payload = orig_pkt[AITF].payload
 			iplayer = orig_pkt[IP]
 			iplayer.remove_payload()
 
 			new_pkt = iplayer/payload
 			del new_pkt.chksum
+			del new_pkt.proto
+			del new_pkt.len
 			new_pkt.show2()
 			return new_pkt
 		return orig_pkt
