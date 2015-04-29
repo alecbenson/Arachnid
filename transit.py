@@ -35,7 +35,7 @@ class Transit():
 
 
 	'''Takes in a block request and processes it'''
-	def manage_block_request(self, packet, load, escalation_level):
+	def manage_block_request(self, pkt, load, escalation_level):
 		#1. Set a local filter and once it expires keep an entry in the shadow table
 		#An entry is 8 characters long, so we use escalation index as 
 		#an index multiplier to find the correct IP address and nonce to block
@@ -45,7 +45,7 @@ class Transit():
 		agw_IP = self.hex_to_ip( load[ 24 + escalation_index : 32 + escalation_index ] )
 
 		#If we are the attacker's gateway (or the next gateway in the event of escalation)
-		if packet.dst == agw_IP:
+		if pkt.dst == agw_IP:
 			nonce = load[32 + escalation_index : 40 + escalation_index]
 			if self.is_valid_nonce(agw_IP, nonce):
 				#IP address of the attacker. We can find it in this part of the RR
@@ -89,25 +89,27 @@ class Transit():
 	We use code 2 because it is never used for Time Exceeded ICMP responses and we can use it to identify AITF enabled routers
 	'''
 	def forward_packet(self, pkt, packet):
-		if packet.dst in aitf_routers:
+		if pkt.dst in aitf_routers:
 			#Remove AITF shims and send the packet on
-			if aitf_routers[packet.dst] == False:
+			if aitf_routers[pkt.dst] == False:
 				pkt = self.remove_AITF_shim(pkt)
-				return
+				return pkt
 
 			#Next hop is AITF enabled, add/Update AITF shim
 			else:
 				pkt = self.shim_packet(pkt)
 
 			packet.set_payload( str(pkt) )
-			return
+			return pkt
 
+		pkt = self.remove_AITF_shim(pkt)
+		packet.set_payload( str(pkt) )
+		packet.accept()
 
 		#There is no entry for this packet yet, send a probe out
-		aitf_routers[packet.dst] = False
-		probe = IP(src=config_params.local_ip, dst=packet.dst, ttl=1)/ICMP(code=4)
+		aitf_routers[pkt.dst] = False
+		probe = IP(src=config_params.local_ip, dst=pkt.dst, ttl=1)/ICMP(code=4)
 		send(probe)
-		packet.accept()
 
 	'''
 	Processes AITF probes and determines if the router/host is legacy or AITF enabled
@@ -185,15 +187,11 @@ class Transit():
 			#We check if the next hop is AITF enabled and shim packets if it is. Otherwise, remove the shim.
 			self.forward_packet(pkt, packet)
 
-			#Send the packet on
-			self.forward_packet(pkt, packet)
-
 		elif config_params.mode == "host":
 			self.check_traffic(packet)
 		else:
 			print "Unrecognized mode set in the config: {0}\n".format(config_params.mode)
 			sys.exit()
-		packet.accept()
 
 
 	'''
@@ -350,7 +348,6 @@ class Transit():
 			pkt = iplayer/aitf/payload
 
 		del pkt.chksum
-		pkt.show2()
 		return pkt
 
 
@@ -367,7 +364,6 @@ class Transit():
 
 			new_pkt = iplayer/payload
 			del new_pkt.chksum
-			new_pkt.show2()
 			return new_pkt
 
 
@@ -383,15 +379,22 @@ class Transit():
 	def setup_commands(self):
 		if config_params.mode == "router":
 			iptb_forward = "sudo iptables -I FORWARD -d {0} -j NFQUEUE --queue-num 1".format(config_params.local_subnet)
-			iptb_probe_output = "sudo iptables -I OUTPUT -p icmp -d {0} -j NFQUEUE --queue-num 1".format(config_params.local_subnet)
+
 			iptb_input = "sudo iptables -I INPUT -p tcp --dport 80 -d {0} -j NFQUEUE --queue-num 1".format(config_params.local_subnet)
+			iptb_probe_input = "sudo iptables -I INPUT -p icmp -d {0} -j NFQUEUE --queue-num 1".format(config_params.local_subnet)
+
+			iptb_probe_output = "sudo iptables -I OUTPUT -p icmp -d {0} -j NFQUEUE --queue-num 1".format(config_params.local_subnet)
+
 			ipv4_forwarding = "sudo sysctl -w net.ipv4.ip_forward=1"
 			icmp_send = "echo 0 | sudo tee /proc/sys/net/ipv4/conf/*/send_redirects"
-			icmp_accept = "echo 0 | sudo tee /proc/sys/net/ipv4/conf/*/send_redirects"
+			icmp_accept = "echo 0 | sudo tee /proc/sys/net/ipv4/conf/*/accept_redirects"
 
 			call( iptb_forward.split() )
 			call( iptb_input.split() )
+
 			call( iptb_probe_output.split() )
+			call( iptb_probe_input.split() )
+
 			call( ipv4_forwarding.split() )
 			call( icmp_send.split() )
 			call( icmp_accept.split() )
@@ -433,6 +436,7 @@ def main():
 	global config_params
 	global route_list
 	global shadow_table
+	global aitf_routers
 	route_list = {} #Stored as a dictionary of xx.xx.xx.xx ip addresses (formed with inet_ntoa) and a tuple of (packet_len , current_time)
 	shadow_table = {} #Stored as a dictionary of xx.xx.xx.xx ip addresses (formed with inet ntoa) and a time at which the block will end.
 	aitf_routers = {} #Stored as dictionary of IP addresses and a boolean of whether or not the next hop towards this destination is AITF enabled
@@ -446,6 +450,7 @@ def main():
 
 	transit.bind_packet_layers()
 	transit.net_filter()
+
 
 	
 
