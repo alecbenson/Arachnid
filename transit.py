@@ -18,10 +18,7 @@ class XFieldLenField(FieldLenField):
 '''This class is used to represent the structure of an AITF shim'''
 class AITF(Packet):
 	name = "AITF"
-	fields_desc = [XBitField("PK",0,48),
-	BitField("BytesPerHop",	0,	8),
-	BitField("PayloadProto", 0, 8),
-	BitField("Checksum",	0,	32),
+	fields_desc = [BitField("PayloadProto", 0, 8),
 	XFieldLenField("length", 0, length_of="RR", fmt="H"),
 	StrLenField("RR", "", length_from=lambda x:x.length)]
 
@@ -263,15 +260,6 @@ class Transit():
 		else:
 			print "No RR path attached to this packet, can't send filter request out :( "
 		return
-
-	'''
-	Checks if the next hop is RR enabled
-	'''
-	def check_if_rr_enable(self, pkt):
-		src = config_params.local_ip
-		dst = pkt.dst
-		probe = IP(src=src, dst=dst)/ICMP(type="rrenable", ttl=1)
-		send(probe)
 
 	'''
 	Takes in a shimmed scapy packet object and updates the AITF fields accordingly
