@@ -101,22 +101,7 @@ class Transit():
 			return aitf_routers[packet.dst]
 
 		probe = IP(src=config_params.local_ip, dst=packet.dst, ttl=1)/ICMP(code=4)
-		response = sr1(probe,timeout=1)
-		response.show()
-
-		#We got a response from the next hop and it is not the host
-		if response.type == 11:
-			if response[ICMPerror].code == 2:
-				aitf_routers[packet.dst]=True
-				return True
-			else:
-				aitf_routers[packet.dst]=False
-				return False
-		#We have reached the end host
-		elif packet.dst == response.src:
-			aitf_routers[packet.dst]=True
-			return True
-		return False
+		send(probe)
 		
 
 	'''
@@ -131,12 +116,14 @@ class Transit():
 		if pkt.haslayer(ICMP):
 			#We got probed by another router, set AITF code 2 in response
 			if pkt[ICMP].code == 4:
+				print "\n\nsetting probe request from {0} to have code 2...!\n\n".format(pkt.src)
 				pkt[ICMP].code = 2
 				packet.set_payload( str(pkt) )
 				packet.accept()
 				return
 			#We received a response from the probe
 			elif pkt.haslayer(ICMPerror) and pkt.haslayer(IPerror):
+				pkt.show()
 				dst = pkt[IPerror].dst
 				if pkt[ICMPerror].code == 2 and pkt[ICMP].type == 11:
 					print "\n\n{0} is AITF enabled!!\n\n".format( pkt.src )
