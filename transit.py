@@ -203,6 +203,9 @@ class Transit():
 			pkt.show()
 			self.handle_host_probe(pkt, packet)
 			self.check_traffic(pkt, packet)
+			pkt = self.remove_AITF_shim(pkt)
+			packet.set_payload( str(pkt) )
+			packet.accept()
 		else:
 			print "Unrecognized mode set in the config: {0}\n".format(config_params.mode)
 			sys.exit()
