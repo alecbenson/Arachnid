@@ -65,18 +65,18 @@ class Transit():
 	def three_way_handshake(self, src, dst, payload):
 				#Form the requst packet and shove the RR path in the payload
 		sport = random.randint(1024,65535)
-		seq= random.randint(1,100000)
+		seq= random.randint(1,1000000)
 
 		#three way hannnndshakkeeeee!! (whaaat)
 		ip = IP(src=src, dst=dst )
 		tcp_syn = TCP(sport=sport, dport=80, flags='S', seq=seq)
-		tcp_synack = sr1(ip/tcp_syn)
+		tcp_synack = sr1(ip/tcp_syn, verbose=0)
 
 		#Respond with final ack!
 		#Note that there is a slight complication here. 
 		#Because of the way scapy works, the host is actually totally unaware that we are trying to open up a TCP connection.
 		#When it gets the synack back, our own host freaks out and tries to reset the connection.
-		#We can solve this by blocking outbound reset packets with an Ip table rule, but for now we'll just blissfully pretend that everything is okay. 
+		#We can solve this by blocking outbound reset packets with an Ip table rule.
 		tcp_ack = TCP(sport=sport, dport=80, flags='A', seq=tcp_synack.ack, ack=tcp_synack.seq + 1)
 		send(ip/tcp_ack)
 
@@ -116,35 +116,49 @@ class Transit():
 	'''
 	def handle_AITF_probe(self, pkt, packet):
 		if pkt.haslayer(ICMP):
-				if pkt.haslayer(ICMPerror):
-					#We were queried by another AITF enabled host, respond as AITF enabled
-					if pkt.src == config_params.local_ip:
-						pkt[ICMPerror].code = 2
-						del pkt.chksum
-						print "Responded to {0}'s AITF probe message\n".format( pkt.dst )
-						packet.set_payload( str(pkt) )
+			if pkt.haslayer(ICMPerror):
+				#We were queried by another AITF enabled router, respond as AITF enabled
+				if pkt.src == config_params.local_ip:
+					pkt[ICMPerror].code = 2
+					del pkt.chksum
+					print "Responded to {0}'s AITF probe message\n".format( pkt.dst )
+					packet.set_payload( str(pkt) )
+					packet.accept()
+
+				#We received the response of our previous query
+				elif pkt.dst == config_params.local_ip:
+					dst = pkt[IPerror].dst
+					if pkt[ICMPerror].code == 2:
+						aitf_routers[dst] = True
+						print "{0} is an AITF enabled router\n".format( pkt.src )
+						packet.accept()
+					else:
+						aitf_routers[dst] = False
+						print "{0} is NOT an AITF enabled router\n".format( pkt.src )
 						packet.accept()
 
-					#We received the response of our previous query
-					elif pkt.dst == config_params.local_ip:
-						dst = pkt[IPerror].dst
-						if pkt[ICMPerror].code == 2:
-							aitf_routers[dst] = True
-							print "{0} is an AITF enabled router\n".format( pkt.src )
-							packet.accept()
-						else:
-							aitf_routers[dst] = False
-							print "{0} is NOT an AITF enabled router\n".format( pkt.src )
-							packet.accept()
+			#Our probe didn't expire, the next hop is the destination
+			elif pkt[ICMP].type == 0:
+				if pkt[ICMP].code == 4:
+					aitf_routers[pkt.src] = False
+					packet.accept()
+				elif pkt[ICMP].code == 2:
+					aitf_routers[pkt.src] = True
+					packet.accept()
 
-				#Our probe didn't expire, the next hop is the destination
-				elif pkt[ICMP].type == 0:
-					if pkt[ICMP].code == 4:
-						aitf_routers[pkt.src] = False
-						packet.accept()
-					elif pkt[ICMP].code == 2:
-						aitf_routers[pkt.src] = True
-						packet.accept()
+
+	'''Called when the host receives a probe'''
+	def handle_host_probe(self, pkt, packet):
+		if pkt.haslayer(ICMP):
+			if pkt[ICMP].type == 8:
+				if pkt[ICMP].code == 4:
+					pkt[ICMP].code = 2
+					del pkt.chksum
+					del pkt[ICMP].chksum
+					print "Responded to {0}'s AITF probe message\n".format( pkt.src )
+					packet.set_payload( str(pkt) )
+					packet.accept()
+
 
 
 	def check_block_table(self, pkt, packet):
@@ -152,7 +166,7 @@ class Transit():
 			if pkt.src in shadow_table:
 				time_left = (shadow_table[pkt.src] + config_params.filter_duration) - time.time()
 				if time_left > 0:
-					print "Dropping packet from {0}. Still {1} seconds left in filter".format(pkt.src, time_left)
+					print "Dropping packet from {0}. Still {1} seconds left in filter\n".format(pkt.src, time_left)
 					packet.drop()
 
 
@@ -174,9 +188,8 @@ class Transit():
 	If the machine is in "router" mode, then it will shim packets
 	'''
 	def callback(self, packet):
+		pkt = IP(packet.get_payload())
 		if config_params.mode == "router":
-			pkt = IP(packet.get_payload())
-
 			#Check to make sure the source isn't blocked
 			self.check_block_table(pkt, packet)
 			#Check if the packet is a probe, deal with it accordingly
@@ -187,7 +200,9 @@ class Transit():
 			self.forward_packet(pkt, packet)
 
 		elif config_params.mode == "host":
-			self.check_traffic(packet)
+			pkt.show()
+			self.handle_host_probe(pkt, packet)
+			self.check_traffic(pkt, packet)
 		else:
 			print "Unrecognized mode set in the config: {0}\n".format(config_params.mode)
 			sys.exit()
@@ -252,10 +267,10 @@ class Transit():
 	packet - a netfilterqueue packet object that needs to be analyzed
 	packet_queue - the queue of packets that need to be checked
 	'''
-	def check_traffic(self, packet):
+	def check_traffic(self, pkt, packet):
 		#We need to get the packet object from netfilterqueue in the form of a scapy packet object
 		#I am using dpkt to parse the packet source address here because scapy takes 2.5x longer. 
-		packet_src = socket.inet_ntoa( dpkt.ip.IP(packet.get_payload()).src )
+		packet_src = pkt.src
 		packet_len = packet.get_payload_len()
 		current_time = time.time()
 
@@ -299,11 +314,7 @@ class Transit():
 			(3). Sends a filtering request to the attack source A, to stop F for Tlong >> Ttmp minutes
 	'''
 
-	def send_filter_request(self, packet):
-		#If the router is a liar, do not actually filter.
-		if config_params.is_liar:
-			returns
-	
+	def send_filter_request(self, packet):	
 		#Get the real IP address
 		pkt = IP(packet.get_payload())
 
@@ -384,10 +395,8 @@ class Transit():
 	def setup_commands(self):
 		if config_params.mode == "router":
 			iptb_forward = "sudo iptables -I FORWARD -d {0} -j NFQUEUE --queue-num 1".format(config_params.local_subnet)
-
 			iptb_input = "sudo iptables -I INPUT -p tcp --dport 80 -d {0} -j NFQUEUE --queue-num 1".format(config_params.local_subnet)
 			iptb_probe_input = "sudo iptables -I INPUT -p icmp -d {0} -j NFQUEUE --queue-num 1".format(config_params.local_subnet)
-
 			iptb_probe_output = "sudo iptables -I OUTPUT -p icmp -d {0} -j NFQUEUE --queue-num 1".format(config_params.local_subnet)
 
 			ipv4_forwarding = "sudo sysctl -w net.ipv4.ip_forward=1"
@@ -396,10 +405,8 @@ class Transit():
 
 			call( iptb_forward.split() )
 			call( iptb_input.split() )
-
 			call( iptb_probe_output.split() )
 			call( iptb_probe_input.split() )
-
 			call( ipv4_forwarding.split() )
 			call( icmp_send.split() )
 			call( icmp_accept.split() )
@@ -407,7 +414,6 @@ class Transit():
 		elif config_params.mode == "host":
 			iptb_tcp_input = "sudo iptables -I INPUT -p tcp --dport 80 -d {0} -j NFQUEUE --queue-num 1".format(config_params.local_subnet)
 			iptb_input = "sudo iptables -I INPUT ! -p tcp -d {0} -j NFQUEUE --queue-num 1".format(config_params.local_subnet)
-
 			call( iptb_input.split() )
 			call( iptb_tcp_input.split() )
 
