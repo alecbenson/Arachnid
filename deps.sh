@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 apt-get update
-apt-get -y install git python python-dev python-setuptools python-pip libnetfilter-queue-dev 
+apt-get -y install vim traceroute git python python-dev python-setuptools python-pip libnetfilter-queue-dev 
 pip install scapy
 pip install pycrypto
 pip install netifaces

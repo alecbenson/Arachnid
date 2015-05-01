@@ -35,11 +35,11 @@ class Transit():
 
 
 	'''Takes in a block request and processes it'''
-	def manage_block_request(self, pkt, load, escalation_level):
+	def manage_block_request(self, pkt, load, level):
 		#1. Set a local filter and once it expires keep an entry in the shadow table
 		#An entry is 8 characters long, so we use escalation index as 
 		#an index multiplier to find the correct IP address and nonce to block
-		escalation_index = 16*escalation_level
+		escalation_index = 16*level
 
 		#Agw is the attacker gateway. We can find it in this part of the RR
 		agw_IP = self.hex_to_ip( load[ 24 + escalation_index : 32 + escalation_index ] )
@@ -49,9 +49,10 @@ class Transit():
 			nonce = load[32 + escalation_index : 40 + escalation_index]
 			if self.is_valid_nonce(agw_IP, nonce):
 				#IP address of the attacker. We can find it in this part of the RR
-				block_dest = self.hex_to_ip( load[ 8 + escalation_index : 16 + escalation_index ] )
-				shadow_table[block_dest] = time.time()
-				print "Installed filter: attacker {0} is one hop from me, {1}".format(block_dest,agw_IP)
+				block_dest = load[ 8 + escalation_index : 16 + escalation_index ]
+				block_path = load[8 : load.index(block_dest) + 16]
+				shadow_table[block_path] = time.time()
+				print "Installed filter: blocking traffic from route {0}".format( str(block_path) )
 			else:
 				print "Did NOT install filter: attacker has spoofed this path".format(nonce)
 		else:
@@ -163,11 +164,20 @@ class Transit():
 
 	def check_block_table(self, pkt, packet):
 			#Check to make sure the source isn't blocked
-			if pkt.src in shadow_table:
-				time_left = (shadow_table[pkt.src] + config_params.filter_duration) - time.time()
-				if time_left > 0:
-					print "Dropping packet from {0}. Still {1} seconds left in filter\n".format(pkt.src, time_left)
-					packet.drop()
+			path = ""
+			if pkt.haslayer(AITF):
+				path = pkt[AITF].RR
+			else:
+				path = self.ip_to_hex(pkt.src) + "ffffffff"
+			
+			if path not in shadow_table:
+				return
+
+			time_left = (shadow_table[path] + config_params.filter_duration) - time.time()
+			if time_left > 0:
+				print "\n\nDropping packet from blocked path. Still {1} seconds left in filter\n\n".format(path, time_left)
+				packet.drop()
+
 
 
 	def handle_block_request(self, pkt, packet):
@@ -176,7 +186,8 @@ class Transit():
 				if pkt.haslayer(TCP) and pkt.haslayer(Raw):
 					load = str(pkt[Raw].load)
 					if "RRBLOCK:" in load:
-						self.manage_block_request(pkt, load, 0)
+						escalation_index = int(load[-1:])
+						self.manage_block_request(pkt, load, escalation_index)
 
 
 
@@ -293,7 +304,7 @@ class Transit():
 					#nfqueue will wait for us to accept the packet that send_filter_request sends, and send_filter_request will wait for a response 
 					#(which never come because nfqueue hasn't had a chance to accept)
 					try:
-						send_thread = threading.Thread(target=self.send_filter_request, args=(packet,) )
+						send_thread = threading.Thread(target=self.send_filter_request, args=(packet,0) )
 						send_thread.start()
 						route_list[packet_src] = (0, current_time )
 					except:
@@ -317,13 +328,13 @@ class Transit():
 			(3). Sends a filtering request to the attack source A, to stop F for Tlong >> Ttmp minutes
 	'''
 
-	def send_filter_request(self, packet):	
+	def send_filter_request(self, packet, escalation_index):	
 		#Get the real IP address
 		pkt = IP(packet.get_payload())
 
 		#We can't send a filter request without an AITF shim
 		if pkt.haslayer(AITF):
-			rr_path = pkt[AITF].RR
+			rr_path = pkt[AITF].RR + str(escalation_index)
 			print "Sending a filtering request to block traffic from route {0}...\n".format( rr_path )
 
 			#Establish a three way handshake to send a filtering request
