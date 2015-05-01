@@ -43,20 +43,21 @@ class Transit():
 
 		#Agw is the attacker gateway. We can find it in this part of the RR
 		agw_IP = self.hex_to_ip( load[ 24 + escalation_index : 32 + escalation_index ] )
+		block_dest = load[ 8 + escalation_index : 16 + escalation_index ]
+		block_path = load[8 : load.index(block_dest) + 16]
 
 		#If we are the attacker's gateway (or the next gateway in the event of escalation)
 		if pkt.dst == agw_IP:
 			nonce = load[32 + escalation_index : 40 + escalation_index]
 			if self.is_valid_nonce(agw_IP, nonce):
 				#IP address of the attacker. We can find it in this part of the RR
-				block_dest = load[ 8 + escalation_index : 16 + escalation_index ]
-				block_path = load[8 : load.index(block_dest) + 16]
-				shadow_table[block_path] = time.time()
+				shadow_table[block_path] = time.time() + config_params.filter_duration
 				print "Installed filter: blocking traffic from route {0}".format( str(block_path) )
 			else:
 				print "Did NOT install filter: attacker has spoofed this path".format(nonce)
 		else:
 			print "Forwarding the requst to the proper attacker gateway, {0}\n".format( agw_IP )
+			shadow_table[block_path] = time.time() + config_params.temp_filter_duration
 			self.three_way_handshake( config_params.local_ip, agw_IP, load)
 
 
@@ -125,6 +126,7 @@ class Transit():
 					print "Responded to {0}'s AITF probe message\n".format( pkt.dst )
 					packet.set_payload( str(pkt) )
 					packet.accept()
+					return True
 
 				#We received the response of our previous query
 				elif pkt.dst == config_params.local_ip:
@@ -133,19 +135,24 @@ class Transit():
 						aitf_routers[dst] = True
 						print "{0} is an AITF enabled router\n".format( pkt.src )
 						packet.accept()
+						return True
 					else:
 						aitf_routers[dst] = False
 						print "{0} is NOT an AITF enabled router\n".format( pkt.src )
 						packet.accept()
+						return True
 
 			#Our probe didn't expire, the next hop is the destination
 			elif pkt[ICMP].type == 0:
 				if pkt[ICMP].code == 4:
 					aitf_routers[pkt.src] = False
 					packet.accept()
+					return True
 				elif pkt[ICMP].code == 2:
 					aitf_routers[pkt.src] = True
 					packet.accept()
+					return True
+		return False
 
 
 	'''Called when the host receives a probe'''
@@ -163,20 +170,23 @@ class Transit():
 
 
 	def check_block_table(self, pkt, packet):
-			#Check to make sure the source isn't blocked
-			path = ""
-			if pkt.haslayer(AITF):
-				path = pkt[AITF].RR
-			else:
-				path = self.ip_to_hex(pkt.src) + "ffffffff"
-			
-			if path not in shadow_table:
-				return
+		#Check to make sure the source isn't blocked
+		path = ""
+		if pkt.haslayer(AITF):
+			path = pkt[AITF].RR
+		else:
+			path = self.ip_to_hex(pkt.src) + "ffffffff"
+		
+		if path not in shadow_table:
+			return False
 
-			time_left = (shadow_table[path] + config_params.filter_duration) - time.time()
-			if time_left > 0:
-				print "\n\nDropping packet from blocked path. Still {1} seconds left in filter\n\n".format(path, time_left)
-				packet.drop()
+		time_left = shadow_table[path] - time.time()
+		if time_left > 0:
+			print "Dropping packet from blocked path. Still {1} seconds left in filter\n".format(path, time_left)
+			packet.drop()
+			return True
+		return False
+
 
 
 
@@ -188,6 +198,8 @@ class Transit():
 					if "RRBLOCK:" in load:
 						escalation_index = int(load[-1:])
 						self.manage_block_request(pkt, load, escalation_index)
+						return True
+			return False
 
 
 
@@ -202,11 +214,14 @@ class Transit():
 		pkt = IP(packet.get_payload())
 		if config_params.mode == "router":
 			#Check to make sure the source isn't blocked
-			self.check_block_table(pkt, packet)
+			if self.check_block_table(pkt, packet):
+				return
 			#Check if the packet is a probe, deal with it accordingly
-			self.handle_AITF_probe(pkt, packet)
+			if self.handle_AITF_probe(pkt, packet):
+				return
 			#Check if the packet is a block request, deal with it accordingly
-			self.handle_block_request(pkt, packet)
+			if self.handle_block_request(pkt, packet):
+				return
 			#We check if the next hop is AITF enabled and shim packets if it is. Otherwise, remove the shim.
 			self.forward_packet(pkt, packet)
 
