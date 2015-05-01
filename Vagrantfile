@@ -4,6 +4,7 @@
 $routes1 = <<SCRIPT
   sudo route add -host 10.4.4.3 gw 10.4.4.2
   sudo route add -host 10.4.4.4 gw 10.4.4.2
+  sudo cp /vagrant/configs/config1.cfg /vagrant/config.cfg
 
   git clone https://github.com/fqrouter/python-netfilterqueue.git
   cd python-netfilterqueue
@@ -12,6 +13,7 @@ SCRIPT
 
 $routes2 = <<SCRIPT
   sudo route add -host 10.4.4.4 gw 10.4.4.3
+  sudo cp /vagrant/configs/config2.cfg /vagrant/config.cfg
 
   git clone https://github.com/fqrouter/python-netfilterqueue.git
   cd python-netfilterqueue
@@ -20,6 +22,7 @@ SCRIPT
 
 $routes3 = <<SCRIPT
   sudo route add -host 10.4.4.1 gw 10.4.4.2
+  sudo cp /vagrant/configs/config3.cfg /vagrant/config.cfg
 
   git clone https://github.com/fqrouter/python-netfilterqueue.git
   cd python-netfilterqueue
@@ -29,14 +32,25 @@ SCRIPT
 $routes4 = <<SCRIPT
   sudo route add -host 10.4.4.2 gw 10.4.4.3
   sudo route add -host 10.4.4.1 gw 10.4.4.3
+  sudo cp /vagrant/configs/config4.cfg /vagrant/config.cfg
 
   git clone https://github.com/fqrouter/python-netfilterqueue.git
   cd python-netfilterqueue
   sudo python setup.py install
 SCRIPT
 
+
+
+
+
+
 Vagrant.configure(2) do |config|
   config.vm.provision :shell, path: "deps.sh"
+  config.vm.synced_folder ".", "/vagrant", type: "rsync",
+    rsync__exclude: ".git/"
+
+    config.vm.synced_folder ".", "/vagrant", type: "rsync",
+    rsync__exclude: "config.cfg"
 
   config.vm.define "aitf1" do |aitf1|
     aitf1.vm.box = "hashicorp/precise32"
