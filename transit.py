@@ -284,34 +284,35 @@ class Transit():
 	def check_traffic(self, pkt, packet):
 		#We need to get the packet object from netfilterqueue in the form of a scapy packet object
 		#I am using dpkt to parse the packet source address here because scapy takes 2.5x longer. 
-		packet_src = pkt.src
 		packet_len = packet.get_payload_len()
 		current_time = time.time()
 
-		#Store the packet length and the time of entry in each mapping
-		if packet_src not in route_list:
-			print "Added entry for packets from {0}. First packet was {1} bytes in size\n".format(packet_src, packet_len)
-			route_list[packet_src] =  ( packet_len, current_time )
-		else:
-			#If rate_sample_duration seconds have passed, reset the entry
-			if current_time - route_list[packet_src][1] >= config_params.rate_sample_duration:
+		if pkt.haslayer(AITF):
+			packet_src = pkt[AITF].RR
+			#Store the packet length and the time of entry in each mapping
+			if packet_src not in route_list:
+				print "Added entry for packets from {0}. First packet was {1} bytes in size\n".format(packet_src, packet_len)
 				route_list[packet_src] =  ( packet_len, current_time )
-				return
 			else:
-				#If the source of this packet has sent too much traffic...
-				if route_list[packet_src][0] >= config_params.max_bytes:
-					#If we don't put this in a thread, the program will hang because 
-					#nfqueue will wait for us to accept the packet that send_filter_request sends, and send_filter_request will wait for a response 
-					#(which never come because nfqueue hasn't had a chance to accept)
-					try:
-						send_thread = threading.Thread(target=self.send_filter_request, args=(packet,0) )
-						send_thread.start()
-						route_list[packet_src] = (0, current_time )
-					except:
-						pass
+				#If rate_sample_duration seconds have passed, reset the entry
+				if current_time - route_list[packet_src][1] >= config_params.rate_sample_duration:
+					route_list[packet_src] =  ( packet_len, current_time )
+					return
 				else:
-					#Increment the total amount of bytest that this host has sent in recent memory
-					route_list[packet_src] = ( route_list[packet_src][0] +  packet_len, route_list[packet_src][1] )
+					#If the source of this packet has sent too much traffic...
+					if route_list[packet_src][0] >= config_params.max_bytes:
+						#If we don't put this in a thread, the program will hang because 
+						#nfqueue will wait for us to accept the packet that send_filter_request sends, and send_filter_request will wait for a response 
+						#(which never come because nfqueue hasn't had a chance to accept)
+						try:
+							send_thread = threading.Thread(target=self.send_filter_request, args=(packet,0) )
+							send_thread.start()
+							route_list[packet_src] = (0, current_time )
+						except:
+							pass
+					else:
+						#Increment the total amount of bytest that this host has sent in recent memory
+						route_list[packet_src] = ( route_list[packet_src][0] +  packet_len, route_list[packet_src][1] )
 
 
 	'''
