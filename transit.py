@@ -4,7 +4,7 @@ from netfilterqueue import NetfilterQueue
 from Crypto.Cipher import AES
 from subprocess import call
 import socket, sys, time, config, random
-import binascii, threading, dpkt, atexit
+import binascii, threading, atexit
 
 '''This class is used to help determine the length of the RR field when decoding packets'''
 class XFieldLenField(FieldLenField):
@@ -75,10 +75,6 @@ class Transit():
 		tcp_synack = sr1(ip/tcp_syn, verbose=0)
 
 		#Respond with final ack!
-		#Note that there is a slight complication here. 
-		#Because of the way scapy works, the host is actually totally unaware that we are trying to open up a TCP connection.
-		#When it gets the synack back, our own host freaks out and tries to reset the connection.
-		#We can solve this by blocking outbound reset packets with an Ip table rule.
 		tcp_ack = TCP(sport=sport, dport=80, flags='A', seq=tcp_synack.ack, ack=tcp_synack.seq + 1)
 		send(ip/tcp_ack)
 
@@ -111,6 +107,7 @@ class Transit():
 		aitf_routers[pkt.dst] = False
 		probe = IP(src=config_params.local_ip, dst=pkt.dst, ttl=1)/ICMP(code=4)
 		send(probe)
+
 
 	'''
 	Processes AITF probes and determines if the router/host is legacy or AITF enabled
@@ -168,13 +165,16 @@ class Transit():
 					packet.accept()
 
 
-
+	'''
+	Checks the incoming packet to see if a rule has been made to block its path
+	'''
 	def check_block_table(self, pkt, packet):
 		#Check to make sure the source isn't blocked
 		path = ""
 		if pkt.haslayer(AITF):
 			path = pkt[AITF].RR
 		else:
+			'''The packet has no RR path'''
 			path = self.ip_to_hex(pkt.src) + "ffffffff"
 		
 		if path not in shadow_table:
@@ -188,8 +188,7 @@ class Transit():
 		return False
 
 
-
-
+	'''Checks the packet to see if it is a block request'''
 	def handle_block_request(self, pkt, packet):
 			#If the packet is destined to the router, we are likely receiving a block reqeuest
 			if pkt.dst == config_params.local_ip:
@@ -200,8 +199,6 @@ class Transit():
 						self.manage_block_request(pkt, load, escalation_index)
 						return True
 			return False
-
-
 
 
 
@@ -297,8 +294,6 @@ class Transit():
 	packet_queue - the queue of packets that need to be checked
 	'''
 	def check_traffic(self, pkt, packet):
-		#We need to get the packet object from netfilterqueue in the form of a scapy packet object
-		#I am using dpkt to parse the packet source address here because scapy takes 2.5x longer. 
 		packet_len = packet.get_payload_len()
 		current_time = time.time()
 
@@ -316,9 +311,7 @@ class Transit():
 				else:
 					#If the source of this packet has sent too much traffic...
 					if route_list[packet_src][0] >= config_params.max_bytes:
-						#If we don't put this in a thread, the program will hang because 
-						#nfqueue will wait for us to accept the packet that send_filter_request sends, and send_filter_request will wait for a response 
-						#(which never come because nfqueue hasn't had a chance to accept)
+						#We send filter requests in a thread. We don't want to block while we handshake
 						try:
 							send_thread = threading.Thread(target=self.send_filter_request, args=(packet,0) )
 							send_thread.start()
@@ -331,19 +324,9 @@ class Transit():
 
 
 	'''
-	Sends a filtering request to the gateway of the victimized host. Described in the paper, the process is:
-		1. The victim V sends a filtering request to V gw , specifying an undesired flow F .
-		2. The victim?s gateway V gw :
-			(a). Installs a temporary filter to block F for T tmp seconds.
-			(b). Initiates a 3-way handshake with A gw
-			(c). Removes its temporary filter upon completion of the handshake
-
-		3. The attack gateway A gw:
-			(1). Responds to the 3-way handshake
-			(2). Installs a temporary filter to block F for Ttmp seconds, upon completion of the handshake
-			(3). Sends a filtering request to the attack source A, to stop F for Tlong >> Ttmp minutes
+	Sends a filtering request to the gateway of the victimized host.
+	If the Vgw is not the router that should install the block, it will forward it on to the proper router
 	'''
-
 	def send_filter_request(self, packet, escalation_index):	
 		#Get the real IP address
 		pkt = IP(packet.get_payload())
@@ -358,6 +341,8 @@ class Transit():
 		else:
 			print "No RR path attached to this packet, can't send filter request out :( "
 		return
+
+
 
 	'''
 	Takes in a packet and adds/updates the packet shim
@@ -392,7 +377,6 @@ class Transit():
 		return pkt
 
 
-
 	'''
 	orig_pkt - a scapy packet that needs an AITF shim
 	returns the updated scapy packet, or the same packet if no AITF shim exists
@@ -413,14 +397,6 @@ class Transit():
 
 
 
-	'''
-	Converts a netfilter packet object to a scapy packet object
-	'''
-	def nfq_to_scapy(self, nfpacket):
-		payload = nfpacket.get_payload()
-		return IP(payload)
-
-
 	'''Issues IP table rules depending on the mode that the program is running in'''
 	def setup_commands(self):
 		if config_params.mode == "router":
@@ -429,17 +405,10 @@ class Transit():
 			iptb_probe_input = "sudo iptables -I INPUT -p icmp -d {0} -j NFQUEUE --queue-num 1".format(config_params.local_subnet)
 			iptb_probe_output = "sudo iptables -I OUTPUT -p icmp -d {0} -j NFQUEUE --queue-num 1".format(config_params.local_subnet)
 
-			ipv4_forwarding = "sudo sysctl -w net.ipv4.ip_forward=1"
-			icmp_send = "echo 0 | sudo tee /proc/sys/net/ipv4/conf/*/send_redirects"
-			icmp_accept = "echo 0 | sudo tee /proc/sys/net/ipv4/conf/*/accept_redirects"
-
 			call( iptb_forward.split() )
 			call( iptb_input.split() )
 			call( iptb_probe_output.split() )
 			call( iptb_probe_input.split() )
-			call( ipv4_forwarding.split() )
-			call( icmp_send.split() )
-			call( icmp_accept.split() )
 
 		elif config_params.mode == "host":
 			iptb_tcp_input = "sudo iptables -I INPUT -p tcp --dport 80 -d {0} -j NFQUEUE --queue-num 1".format(config_params.local_subnet)
@@ -478,9 +447,12 @@ def main():
 	global route_list
 	global shadow_table
 	global aitf_routers
-	route_list = {} #Stored as a dictionary of xx.xx.xx.xx ip addresses (formed with inet_ntoa) and a tuple of (packet_len , current_time)
-	shadow_table = {} #Stored as a dictionary of xx.xx.xx.xx ip addresses (formed with inet ntoa) and a time at which the block will end.
-	aitf_routers = {} #Stored as dictionary of IP addresses and a boolean of whether or not the next hop towards this destination is AITF enabled
+	#Contains traffic quantity sent by each user
+	route_list = {}
+	#Handles blocking of paths
+	shadow_table = {} 
+	#a table containing probe results
+	aitf_routers = {}
 
 	config_params = config.Configuration()
 	transit = Transit()
